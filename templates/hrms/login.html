@@ -1,0 +1,290 @@
+{% extends "hrms/base.html" %}
+{% load static %}
+
+{% block title %}Login{% endblock %}
+
+{% block extra_css %}
+<style>
+  body { background: var(--blue-50); display:flex; align-items:center; justify-content:center; min-height:100vh; }
+
+  .login-wrapper {
+    width: min(900px, 96vw);
+    background: var(--white);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-xl);
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    min-height: 540px;
+    animation: fadeUp .5s ease both;
+  }
+  @keyframes fadeUp { from { opacity:0; transform:translateY(24px); } to { opacity:1; transform:translateY(0); } }
+
+  /* Left Panel — Image / Branding */
+  .login-left {
+    background: var(--blue-900);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 2.5rem;
+    position: relative; overflow: hidden;
+  }
+  .login-left::before {
+    content:'';
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at 30% 40%, rgba(245,197,24,.15) 0%, transparent 60%),
+                radial-gradient(ellipse at 80% 80%, rgba(36,96,195,.3) 0%, transparent 55%);
+  }
+  .login-brand-img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    position: absolute; inset: 0;
+    opacity: .18;
+  }
+  .login-brand-content { position: relative; z-index: 1; text-align: center; }
+  .login-brand-mark {
+    width: 72px; height: 72px;
+    background: var(--gold-500);
+    border-radius: var(--radius-lg);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2rem; font-weight: 800; color: var(--gray-900);
+    margin: 0 auto 1.25rem;
+    box-shadow: 0 8px 24px rgba(245,197,24,.35);
+  }
+  .login-brand-name {
+    font-size: 1.5rem; font-weight: 800; color: var(--white); line-height: 1.2;
+  }
+  .login-brand-name span { display:block; font-size: .85rem; font-weight:400; color: rgba(255,255,255,.55); margin-top:.3rem; }
+  .login-brand-tagline {
+    margin-top: 2rem; padding: 1rem 1.25rem;
+    background: rgba(255,255,255,.07);
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: var(--radius-md);
+    color: rgba(255,255,255,.7); font-size: .85rem; line-height: 1.6;
+    font-family: var(--font-body); font-style: italic;
+  }
+
+  /* Right Panel — Login Form */
+  .login-right {
+    padding: 2.5rem 2.75rem;
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .login-right h1 {
+    font-size: 1.65rem; font-weight: 800; color: var(--gray-900);
+    margin-bottom: .35rem;
+  }
+  .login-right p { color: var(--gray-500); font-size: .9rem; margin-bottom: 2rem; }
+
+  .login-form { display: flex; flex-direction: column; gap: 1.1rem; }
+  .login-btn {
+    width: 100%; padding: .75rem;
+    background: var(--blue-800); color: var(--white);
+    border: none; border-radius: var(--radius-sm);
+    font-family: var(--font-display); font-size: 1rem; font-weight: 700;
+    cursor: pointer; transition: all .2s; margin-top: .5rem;
+  }
+  .login-btn:hover { background: var(--blue-700); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+
+  .login-footer {
+    margin-top: 1.25rem;
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: .5rem;
+  }
+  .forgot-link {
+    color: var(--blue-700); font-size: .85rem; font-weight: 600;
+    cursor: pointer; background: none; border: none;
+    text-decoration: underline; font-family: var(--font-display);
+  }
+  .forgot-link:hover { color: var(--blue-900); }
+
+  .remember-me { display: flex; align-items: center; gap: .4rem; font-size: .85rem; color: var(--gray-600); cursor: pointer; }
+  .remember-me input { accent-color: var(--blue-700); }
+
+  .error-banner {
+    background: #FEE2E2; border: 1px solid #FECACA; border-radius: var(--radius-sm);
+    padding: .65rem .9rem; color: var(--danger); font-size: .85rem; font-weight: 500;
+  }
+
+  /* Password Reset Modal – wider */
+  #reset-modal .modal { width: min(480px, 95vw); }
+  .reset-step { display: none; }
+  .reset-step.active { display: block; }
+  .step-indicator {
+    display: flex; gap: .5rem; margin-bottom: 1.5rem;
+  }
+  .step-dot {
+    flex: 1; height: 4px; border-radius: 2px;
+    background: var(--gray-200); transition: background .3s;
+  }
+  .step-dot.done { background: var(--blue-700); }
+
+  @media (max-width: 640px) {
+    .login-wrapper { grid-template-columns: 1fr; }
+    .login-left { min-height: 180px; }
+  }
+</style>
+{% endblock %}
+
+{% block body %}
+<div class="login-wrapper">
+
+  <!-- ── Left: Branding / Image ── -->
+  <div class="login-left">
+    {% if login_bg_image %}
+      <img src="{{ login_bg_image }}" class="login-brand-img" alt="Background">
+    {% endif %}
+    <div class="login-brand-content">
+      <div class="login-brand-mark">
+        {% if company_initials %}{{ company_initials }}{% else %}HR{% endif %}
+      </div>
+      <div class="login-brand-name">
+        {{ company_name|default:"Your Company" }}
+        <span>HR Management System</span>
+      </div>
+      <div class="login-brand-tagline">
+        "Empowering your workforce — manage people, payroll, and performance in one place."
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Right: Login Form ── -->
+  <div class="login-right">
+    <h1>Welcome Back</h1>
+    <p>Sign in to access the HR Management System.</p>
+
+    {% if form.errors %}
+    <div class="error-banner">⚠ Invalid credentials. Please try again.</div>
+    {% endif %}
+
+    <form method="post" action="{% url 'accounts:login' %}" class="login-form" id="login-form">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{{ next }}">
+
+      <div class="form-group">
+        <label class="form-label" for="id_username">Username</label>
+        <input type="text" id="id_username" name="username"
+               class="form-control" placeholder="Enter your username"
+               value="{{ form.username.value|default:'' }}" required autocomplete="username">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="id_password">Password</label>
+        <div style="position:relative;">
+          <input type="password" id="id_password" name="password"
+                 class="form-control" placeholder="Enter your password"
+                 required autocomplete="current-password" style="padding-right:2.8rem;">
+          <button type="button" onclick="togglePwd()" title="Show/hide password"
+                  style="position:absolute;right:.7rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:1.1rem;">
+            👁
+          </button>
+        </div>
+      </div>
+
+      <div class="login-footer">
+        <label class="remember-me">
+          <input type="checkbox" name="remember_me"> Remember me
+        </label>
+        <button type="button" class="forgot-link" onclick="openModal('reset-modal')">
+          Forgot / Reset Password?
+        </button>
+      </div>
+
+      <button type="submit" class="login-btn">Sign In →</button>
+    </form>
+  </div>
+</div>
+
+<!-- ── Forgot / Reset Password Modal ── -->
+<div class="modal-backdrop" id="reset-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Reset Password</h2>
+      <button class="btn-close" onclick="closeModal('reset-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+
+      <!-- Step indicators -->
+      <div class="step-indicator">
+        <div class="step-dot done" id="step-dot-1"></div>
+        <div class="step-dot" id="step-dot-2"></div>
+        <div class="step-dot" id="step-dot-3"></div>
+      </div>
+
+      <!-- Step 1: Enter email -->
+      <div class="reset-step active" id="reset-step-1">
+        <p style="color:var(--gray-600);margin-bottom:1rem;font-size:.9rem;">Enter the email address associated with your account and we'll send you a reset link.</p>
+        <div class="form-group">
+          <label class="form-label">Email Address</label>
+          <input type="email" id="reset-email" class="form-control" placeholder="you@company.com">
+        </div>
+      </div>
+
+      <!-- Step 2: Enter OTP -->
+      <div class="reset-step" id="reset-step-2">
+        <p style="color:var(--gray-600);margin-bottom:1rem;font-size:.9rem;">Enter the 6-digit OTP sent to your email.</p>
+        <div class="form-group">
+          <label class="form-label">OTP Code</label>
+          <input type="text" id="reset-otp" class="form-control" placeholder="6-digit code" maxlength="6" inputmode="numeric">
+        </div>
+      </div>
+
+      <!-- Step 3: New Password -->
+      <div class="reset-step" id="reset-step-3">
+        <p style="color:var(--gray-600);margin-bottom:1rem;font-size:.9rem;">Create your new password. Must be at least 8 characters.</p>
+        <div class="form-group" style="margin-bottom:.85rem;">
+          <label class="form-label">New Password</label>
+          <input type="password" id="new-password" class="form-control" placeholder="New password">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Confirm Password</label>
+          <input type="password" id="confirm-password" class="form-control" placeholder="Confirm new password">
+        </div>
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" id="reset-back-btn" onclick="resetStep(-1)" style="display:none;">← Back</button>
+      <button class="btn btn-primary" id="reset-next-btn" onclick="resetStep(1)">Send Reset Link →</button>
+    </div>
+  </div>
+</div>
+
+<!-- Global Logout Modal (from base) -->
+{# {% include "hrms/partials/logout_modal.html" %} #}
+
+<script>
+  let resetCurrentStep = 1;
+  const resetLabels = ['Send Reset Link →', 'Verify OTP →', 'Reset Password'];
+
+  function resetStep(dir) {
+    resetCurrentStep += dir;
+    if (resetCurrentStep < 1) resetCurrentStep = 1;
+    if (resetCurrentStep > 3) {
+      // Submit reset
+      showToast('Password reset successfully! You may now log in.', 'success');
+      closeModal('reset-modal');
+      resetCurrentStep = 1;
+      updateResetUI();
+      return;
+    }
+    updateResetUI();
+  }
+  function updateResetUI() {
+    document.querySelectorAll('.reset-step').forEach((el, i) => {
+      el.classList.toggle('active', i + 1 === resetCurrentStep);
+    });
+    document.querySelectorAll('.step-dot').forEach((dot, i) => {
+      dot.classList.toggle('done', i + 1 <= resetCurrentStep);
+    });
+    document.getElementById('reset-back-btn').style.display = resetCurrentStep > 1 ? '' : 'none';
+    document.getElementById('reset-next-btn').textContent = resetLabels[resetCurrentStep - 1];
+  }
+
+  function togglePwd() {
+    const inp = document.getElementById('id_password');
+    inp.type = inp.type === 'password' ? 'text' : 'password';
+  }
+</script>
+
+<div class="toast-container" id="toast-container"></div>
+<script src="{% static 'js/base.js' %}"></script>
+{% endblock %}

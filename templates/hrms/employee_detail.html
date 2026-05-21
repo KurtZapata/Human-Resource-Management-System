@@ -1,0 +1,442 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}{{ employee.first_name }} {{ employee.last_name }}{% endblock %}
+{% block page_title %}Employee Profile{% endblock %}
+{% block breadcrumb %}HR Management › Employees › {{ employee.last_name }}, {{ employee.first_name }}{% endblock %}
+
+{% block header_actions %}
+  <a href="{% url 'employees:list' %}" class="btn btn-outline btn-sm"
+     style="color:var(--white);border-color:rgba(255,255,255,.4);">← Back</a>
+  <button class="btn btn-gold btn-sm" onclick="openEditModal()">✏ Edit Employee</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .profile-layout {
+    display: grid; grid-template-columns: 290px 1fr; gap: 1.25rem; align-items: start;
+  }
+  @media (max-width:900px) { .profile-layout { grid-template-columns: 1fr; } }
+
+  /* ── Left profile card ── */
+  .profile-card {
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-xl); overflow: hidden; box-shadow: var(--shadow-sm);
+    position: sticky; top: calc(var(--header-h) + 1rem);
+  }
+  .profile-banner {
+    height: 88px;
+    background: linear-gradient(135deg, var(--blue-900) 0%, var(--blue-700) 100%);
+    position: relative;
+  }
+  .profile-banner::after {
+    content: '';
+    position: absolute; inset: 0;
+    background: radial-gradient(ellipse at 80% 50%, rgba(245,197,24,.18) 0%, transparent 65%);
+  }
+  .profile-avatar-wrap {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 0 1.5rem 1.5rem; margin-top: -38px; position: relative; z-index: 1;
+  }
+  .profile-avatar {
+    width: 76px; height: 76px; border-radius: 50%;
+    background: var(--blue-800); color: var(--white);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.55rem; font-weight: 800;
+    border: 4px solid var(--white); box-shadow: var(--shadow-md);
+  }
+  .profile-avatar.active  { background: var(--blue-800); }
+  .profile-avatar.inactive{ background: var(--gray-400); }
+
+  .profile-name { font-size: 1.1rem; font-weight: 800; color: var(--gray-900); margin-top: .65rem; text-align: center; }
+  .profile-code { font-size: .78rem; color: var(--gray-400); text-align: center; margin-top: .15rem; }
+  .profile-badges { display: flex; gap: .4rem; justify-content: center; flex-wrap: wrap; margin-top: .65rem; }
+
+  .profile-meta { padding: .5rem 1.25rem 1.25rem; }
+  .meta-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: .5rem 0; font-size: .83rem; border-bottom: 1px dashed var(--gray-100);
+  }
+  .meta-row:last-child { border-bottom: none; }
+  .meta-label { color: var(--gray-400); font-weight: 600; }
+  .meta-val   { color: var(--gray-800); font-weight: 600; text-align: right; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ── Right tabs area ── */
+  .detail-tabs { display: flex; gap: .2rem; border-bottom: 2px solid var(--gray-200); margin-bottom: 1.25rem; overflow-x: auto; }
+  .dtab {
+    padding: .55rem 1rem; background: none; border: none;
+    font-family: var(--font-display); font-size: .88rem; font-weight: 600;
+    color: var(--gray-500); cursor: pointer;
+    border-bottom: 2px solid transparent; margin-bottom: -2px;
+    transition: all .15s; white-space: nowrap;
+  }
+  .dtab.active { color: var(--blue-800); border-bottom-color: var(--blue-800); }
+  .dtab-panel { display: none; }
+  .dtab-panel.active { display: block; }
+
+  /* Info grid */
+  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  @media (max-width:640px) { .info-grid { grid-template-columns: 1fr; } }
+  .info-field { display: flex; flex-direction: column; gap: .3rem; }
+  .info-field label { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--gray-400); }
+  .info-field span  { font-size: .92rem; font-weight: 600; color: var(--gray-800); }
+  .info-field span.empty { color: var(--gray-300); font-style: italic; }
+
+  /* Attendance mini table in profile */
+  .att-mini-table { font-size: .84rem; }
+  .att-mini-table td { padding: .5rem .75rem; }
+
+  /* Leave balance bars */
+  .leave-bar-wrap { margin-bottom: .9rem; }
+  .leave-bar-label { display: flex; justify-content: space-between; font-size: .82rem; font-weight: 600; color: var(--gray-700); margin-bottom: .35rem; }
+  .leave-bar-track { height: 8px; background: var(--gray-200); border-radius: 4px; overflow: hidden; }
+  .leave-bar-fill  { height: 100%; border-radius: 4px; background: var(--blue-700); transition: width .5s; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="profile-layout">
+
+  <!-- ── Left: Profile Card ── -->
+  <div class="profile-card">
+    <div class="profile-banner"></div>
+    <div class="profile-avatar-wrap">
+      <div class="profile-avatar {{ employee.status }}">
+        {{ employee.first_name|slice:":1" }}{{ employee.last_name|slice:":1" }}
+      </div>
+      <div class="profile-name">{{ employee.first_name }} {{ employee.last_name }}</div>
+      <div class="profile-code">{{ employee.employee_code }}</div>
+      <div class="profile-badges">
+        <span class="badge {% if employee.status == 'active' %}badge-success{% else %}badge-danger{% endif %}">
+          {{ employee.status|title }}
+        </span>
+        <span class="badge {% if employee.employment_type == 'regular' %}badge-blue{% else %}badge-gold{% endif %}">
+          {{ employee.employment_type|title }}
+        </span>
+      </div>
+    </div>
+
+    <div class="profile-meta">
+      <div class="meta-row">
+        <span class="meta-label">Department</span>
+        <span class="meta-val">{{ employee.department.name|default:"—" }}</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-label">Position</span>
+        <span class="meta-val">{{ employee.position.name|default:"—" }}</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-label">Salary Grade</span>
+        <span class="meta-val">{{ employee.salary_grade.name|default:"—" }}</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-label">Date Hired</span>
+        <span class="meta-val">{{ employee.date_hired|date:"M d, Y"|default:"—" }}</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-label">Email</span>
+        <span class="meta-val" title="{{ employee.email }}">{{ employee.email }}</span>
+      </div>
+      <div class="meta-row">
+        <span class="meta-label">Phone</span>
+        <span class="meta-val">{{ employee.phone|default:"—" }}</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Right: Tab Panels ── -->
+  <div>
+    <div class="detail-tabs">
+      <button class="dtab active" onclick="switchDTab('tab-personal', this)">📋 Personal Info</button>
+      <button class="dtab" onclick="switchDTab('tab-attendance', this)">📅 Attendance</button>
+      <button class="dtab" onclick="switchDTab('tab-payroll', this)">💰 Payroll History</button>
+      <button class="dtab" onclick="switchDTab('tab-leave', this)">🏖 Leave Balance</button>
+    </div>
+
+    <!-- TAB 1: Personal Info -->
+<div class="dtab-panel active" id="tab-personal">
+  <div class="card">
+    <div class="card-header"><h3>Personal Information</h3></div>
+    <div class="card-body">
+      <div class="info-grid">
+        <div class="info-field">
+          <label>First Name</label>
+          <span>{{ employee.first_name }}</span>
+        </div>
+        <div class="info-field">
+          <label>Last Name</label>
+          <span>{{ employee.last_name }}</span>
+        </div>
+        <div class="info-field">
+          <label>Email Address</label>
+          <span>{{ employee.email }}</span>
+        </div>
+        <div class="info-field">
+          <label>Phone Number</label>
+          <span {% if not employee.phone %}class="empty"{% endif %}>{{ employee.phone|default:"Not provided" }}</span>
+        </div>
+        <div class="info-field" style="grid-column:1/-1;">
+          <label>Address</label>
+          <span {% if not employee.address %}class="empty"{% endif %}>{{ employee.address|default:"Not provided" }}</span>
+        </div>
+      </div>
+
+      <hr class="divider" style="margin:1.25rem 0;">
+
+      <div class="info-grid">
+        <div class="info-field">
+          <label>Employee Code</label>
+          <span><code style="background:var(--gray-100);padding:.2rem .5rem;border-radius:4px;font-size:.88rem;">{{ employee.employee_code }}</code></span>
+        </div>
+        <div class="info-field">
+          <label>Date Hired</label>
+          <span>{{ employee.date_hired|date:"F d, Y"|default:"—" }}</span>
+        </div>
+        <div class="info-field">
+          <label>Employment Type</label>
+          <span>{{ employee.employment_type|title }}</span>
+        </div>
+        <div class="info-field">
+          <label>Status</label>
+          <span>
+            <span class="badge {% if employee.status == 'active' %}badge-success{% else %}badge-danger{% endif %}">
+              {{ employee.status|title }}
+            </span>
+          </span>
+        </div>
+        <div class="info-field">
+          <label>Department</label>
+          <span>{{ employee.department.name|default:"—" }}</span>
+        </div>
+        <div class="info-field">
+          <label>Position</label>
+          <span>{{ employee.position.name|default:"—" }}</span>
+        </div>
+        <div class="info-field">
+          <label>Salary Grade</label>
+          <span>{{ employee.salary_grade.name|default:"—" }}</span>
+        </div>
+        <div class="info-field">
+          <label>Base Salary</label>
+          <span>₱{{ employee.salary_grade.base_salary|floatformat:"2"|default:"—" }}</span>
+        </div>
+      </div>
+
+      <hr class="divider" style="margin:1.5rem 0;">
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+        <div>
+          <div style="font-size:.95rem;font-weight:800;color:var(--gray-800);">System Account &amp; Role</div>
+          <div style="font-size:.8rem;color:var(--gray-400);margin-top:.15rem;">
+            Controls admin access level for this employee
+          </div>
+        </div>
+      </div>
+
+      {% if employee.systemuser %}
+      <form method="post" action="{% url 'employees:update_employee_role' pk=employee.id %}"
+            style="background:var(--gray-50);border:1px solid var(--gray-200);
+                   border-radius:var(--radius-lg);padding:1.25rem;">
+        {% csrf_token %}
+
+        <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1.1rem;">
+          <div style="width:38px;height:38px;border-radius:50%;background:var(--blue-800);
+                      color:var(--white);display:flex;align-items:center;justify-content:center;
+                      font-weight:700;font-size:.85rem;flex-shrink:0;">
+            {{ employee.systemuser.username|slice:':2'|upper }}
+          </div>
+          <div>
+            <div style="font-weight:700;font-size:.9rem;color:var(--gray-800);">
+              @{{ employee.systemuser.username }}
+            </div>
+            <div style="font-size:.75rem;color:var(--gray-400);">
+              {% if employee.systemuser.is_active %}
+                <span style="color:var(--success);">● Active</span>
+              {% else %}
+                <span style="color:var(--danger);">● Inactive</span>
+              {% endif %}
+              · Last login: {{ employee.systemuser.last_login|date:"M d, Y H:i"|default:"Never" }}
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-bottom:1rem;">
+          <label class="form-label">Admin Role</label>
+          <select name="role_id" class="form-control" id="emp-role-select"
+                  onchange="highlightRoleChange(this)">
+            <option value="">🚫 No Admin Access (Employee only)</option>
+            {% for role in roles %}
+            <option value="{{ role.id }}"
+                    {% if employee.systemuser.role_id == role.id %}selected{% endif %}>
+              {% if role.name == 'SuperAdmin' %}👑{% elif role.name == 'HRAdmin' %}🛡{% else %}👤{% endif %}
+              {{ role.name }}
+              —
+              {% if role.name == 'SuperAdmin' %}Full system access
+              {% elif role.name == 'HRAdmin'  %}HR & Payroll access
+              {% elif role.name == 'StaffAdmin' %}View-only access
+              {% else %}{{ role.description|default:"Custom" }}{% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;">
+          <button type="submit" class="btn btn-primary btn-sm" id="save-role-btn">
+            💾 Save Role
+          </button>
+          <div style="font-size:.75rem;color:var(--gray-400);" id="role-change-hint" style="display:none;">
+            ⚠ Unsaved change — click Save Role to apply.
+          </div>
+        </div>
+
+      </form>
+
+      {% else %}
+      <div style="background:var(--gray-50);border:1px solid var(--gray-200);
+                  border-radius:var(--radius-lg);padding:1.25rem;text-align:center;">
+        <div style="font-size:.9rem;color:var(--gray-500);margin-bottom:.85rem;">
+          This employee has no system account yet.
+        </div>
+        <a href="{% url 'employees:users' %}" class="btn btn-primary btn-sm">
+          + Create System Account
+        </a>
+      </div>
+      {% endif %}
+
+      <script>
+        function highlightRoleChange(sel) {
+          document.getElementById('role-change-hint').style.display = 'inline';
+          document.getElementById('save-role-btn').style.background = 'var(--gold-500)';
+          document.getElementById('save-role-btn').style.color      = 'var(--gray-900)';
+        }
+      </script>
+
+    </div>
+  </div>
+</div>
+
+    <!-- TAB 2: Attendance -->
+    <div class="dtab-panel" id="tab-attendance">
+      <div class="card">
+        <div class="card-header">
+          <h3>Recent Attendance</h3>
+          <a href="{% url 'attendance:records' %}?emp_id={{ employee.id }}" class="btn btn-outline btn-sm">View All</a>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table att-mini-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>1st Half In</th>
+                <th>1st Half Out</th>
+                <th>2nd Half In</th>
+                <th>2nd Half Out</th>
+                <th>Hours</th>
+                <th>Late (min)</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for att in recent_attendance %}
+              <tr>
+                <td>{{ att.date|date:"M d, Y" }}</td>
+                <td>{{ att.time_in_am|default:"—" }}</td>
+                <td>{{ att.time_out_am|default:"—" }}</td>
+                <td>{{ att.time_in_pm|default:"—" }}</td>
+                <td>{{ att.time_out_pm|default:"—" }}</td>
+                <td>{{ att.total_hours|default:"—" }}</td>
+                <td>{{ att.late_minutes|default:"0" }}</td>
+                <td>
+                  <span class="badge {% if att.status == 'present' %}badge-success{% elif att.status == 'late' %}badge-warning{% else %}badge-danger{% endif %}">
+                    {{ att.status|title }}
+                  </span>
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="8" style="text-align:center;padding:2rem;color:var(--gray-400);">No attendance records found.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: Payroll History -->
+    <div class="dtab-panel" id="tab-payroll">
+      <div class="card">
+        <div class="card-header">
+          <h3>Payroll History</h3>
+          <a href="{% url 'payroll:report' %}" class="btn btn-outline btn-sm">Go to Payroll</a>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Period</th>
+                <th class="num" style="text-align:right;">Basic Pay</th>
+                <th class="num" style="text-align:right;">Gross Pay</th>
+                <th class="num" style="text-align:right;">Deductions</th>
+                <th class="num" style="text-align:right;">Net Pay</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for p in payroll_history %}
+              <tr>
+                <td>{{ p.payroll_period.start_date|date:"M d" }} – {{ p.payroll_period.end_date|date:"M d, Y" }}</td>
+                <td style="text-align:right;">₱{{ p.basic_pay|floatformat:"2" }}</td>
+                <td style="text-align:right;color:var(--success);">₱{{ p.gross_pay|floatformat:"2" }}</td>
+                <td style="text-align:right;color:var(--danger);">₱{{ p.total_deductions|floatformat:"2" }}</td>
+                <td style="text-align:right;font-weight:800;color:var(--blue-800);">₱{{ p.net_pay|floatformat:"2" }}</td>
+                <td>
+                  <span class="badge {% if p.is_confirmed %}badge-success{% else %}badge-warning{% endif %}">
+                    {% if p.is_confirmed %}Confirmed{% else %}{{ p.status|title }}{% endif %}
+                  </span>
+                </td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="6" style="text-align:center;padding:2rem;color:var(--gray-400);">No payroll history found.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: Leave Balance -->
+    <div class="dtab-panel" id="tab-leave">
+      <div class="card">
+        <div class="card-header"><h3>Leave Balances</h3></div>
+        <div class="card-body">
+          {% for lb in leave_balances %}
+          <div class="leave-bar-wrap">
+            <div class="leave-bar-label">
+              <span>{{ lb.leave_type.name }} {% if lb.leave_type.is_paid %}<span class="badge badge-success" style="font-size:.65rem;">Paid</span>{% else %}<span class="badge badge-danger" style="font-size:.65rem;">Unpaid</span>{% endif %}</span>
+              <span>{{ lb.remaining_days }} / {{ lb.leave_type.max_days }} days remaining</span>
+            </div>
+            <div class="leave-bar-track">
+              <div class="leave-bar-fill" style="width:{% widthratio lb.remaining_days lb.leave_type.max_days 100 %}%;{% if lb.remaining_days <= 1 %}background:var(--danger);{% elif lb.remaining_days <= 3 %}background:var(--warning);{% endif %}"></div>
+            </div>
+          </div>
+          {% empty %}
+          <p class="text-sm text-gray" style="text-align:center;padding:1.5rem 0;">No leave balances configured for this employee.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /right col -->
+</div><!-- /profile-layout -->
+
+<script>
+  function switchDTab(id, btn) {
+    document.querySelectorAll('.dtab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.dtab').forEach(b => b.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    btn.classList.add('active');
+  }
+  function openEditModal() {
+    window.location.href = "{% url 'employees:list' %}?edit={{ employee.id }}";
+  }
+</script>
+{% endblock %}

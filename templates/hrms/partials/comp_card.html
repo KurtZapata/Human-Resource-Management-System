@@ -1,0 +1,75 @@
+
+{% load static %}
+
+{% with op=comp.operator|default:'+' %}
+<div class="comp-card {% if not comp.is_active %}inactive{% endif %} {% if comp.is_locked %}locked{% endif %}"
+     id="comp-{{ comp.id }}"
+     data-id="{{ comp.id }}"
+     draggable="{% if not comp.is_locked %}true{% else %}false{% endif %}"
+     ondragstart="onStart(event, this)"
+     ondragend="onEnd(event, this)">
+
+  <!-- Operator badge -->
+  <div class="comp-op
+    {% if op == '+' %}plus
+    {% elif op == '-' %}minus
+    {% elif op == '*' %}times
+    {% elif op == '/' %}divide
+    {% endif %}">
+    {% if op == '+' %}+
+    {% elif op == '-' %}−
+    {% elif op == '*' %}×
+    {% elif op == '/' %}÷
+    {% else %}+{% endif %}
+  </div>
+
+  <!-- Drag handle -->
+  <div class="comp-drag" title="{% if comp.is_locked %}Locked — cannot reorder{% else %}Drag to reorder{% endif %}">
+    <span></span><span></span><span></span>
+  </div>
+
+  <!-- Body -->
+  <div class="comp-body">
+    <div class="comp-name-row">
+      <span class="comp-name">{{ comp.name }}</span>
+      {% if comp.is_locked %}
+        <span class="comp-locked-badge">🔒 Default</span>
+      {% endif %}
+    </div>
+
+    <!-- Formula / value display -->
+    {% if comp.calculation_type == 'fixed' %}
+      <div class="comp-value">₱{{ comp.default_value|floatformat:"2g" }} fixed</div>
+    {% elif comp.calculation_type == 'percentage' %}
+      <div class="comp-value">{{ comp.default_value|floatformat:"4g" }}% of {{ comp.pct_base|default:'basic_pay' }}</div>
+    {% elif comp.calculation_type == 'formula' %}
+      <div class="comp-formula" title="{{ comp.formula }}">ƒ {{ comp.formula|truncatechars:45 }}</div>
+    {% endif %}
+
+    {% if comp.description %}
+      <div style="font-size:.72rem;color:var(--gray-400);margin-top:.1rem;">{{ comp.description|truncatechars:50 }}</div>
+    {% endif %}
+  </div>
+
+  <!-- Actions -->
+  <div class="comp-actions">
+    <!-- Active toggle -->
+    <button class="comp-toggle-btn {% if comp.is_active %}on{% else %}off{% endif %}"
+            title="{% if comp.is_active %}Active — click to disable{% else %}Inactive — click to enable{% endif %}"
+            onclick="toggleComp({{ comp.id }}, this)"
+            {% if comp.is_locked %}disabled title="Default components cannot be disabled"{% endif %}>
+      {% if comp.is_active %}✓{% else %}✗{% endif %}
+    </button>
+
+    <!-- Edit (hidden for locked) -->
+    {% if not comp.is_locked %}
+    <button class="comp-toggle-btn comp-edit-btn" title="Edit" onclick="editComp({{ comp.id }})">✏</button>
+    <button class="comp-toggle-btn comp-del-btn"
+            title="Delete"
+            style="color:var(--danger);"
+            onclick="deleteComp({{ comp.id }}, '{{ comp.name|escapejs }}')">🗑</button>
+    {% endif %}
+  </div>
+
+</div>
+{% endwith %}

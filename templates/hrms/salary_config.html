@@ -1,0 +1,906 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Salary Configuration{% endblock %}
+{% block page_title %}Salary Configuration{% endblock %}
+{% block breadcrumb %}Payroll › Salary Components{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-gold btn-sm" onclick="openModal('add-component-modal')">+ Add Component</button>
+  <button class="btn btn-outline btn-sm"
+          style="color:var(--white);border-color:rgba(255,255,255,.4);"
+          onclick="saveOrder()">💾 Save Order</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* ── Page layout ── */
+  .salary-page { display:flex; flex-direction:column; gap:1.5rem; }
+
+  /* ── Formula variables reference ── */
+  .var-ref {
+    background:var(--white); border:1px solid var(--gray-200);
+    border-radius:var(--radius-lg); padding:1rem 1.4rem;
+  }
+  .var-ref h4 { font-size:.82rem; font-weight:700; color:var(--gray-700); margin-bottom:.65rem; }
+  .var-chips  { display:flex; flex-wrap:wrap; gap:.4rem; }
+  .var-chip {
+    font-family:monospace; font-size:.78rem; font-weight:600;
+    background:var(--blue-50); color:var(--blue-800);
+    border:1px solid var(--blue-100); border-radius:4px;
+    padding:.18rem .55rem; cursor:pointer; transition:all .15s;
+  }
+  .var-chip:hover { background:var(--blue-800); color:var(--white); }
+
+  /* ── Columns ── */
+  .salary-cols {
+    display:grid; grid-template-columns:1fr 1fr; gap:1.25rem;
+  }
+  @media(max-width:900px){ .salary-cols{grid-template-columns:1fr;} }
+
+  /* ── Column header ── */
+  .col-head {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:1rem 1.25rem; border-bottom:2px solid var(--gray-200);
+  }
+  .col-head h3 { font-size:.95rem; font-weight:800; }
+  .col-count { font-size:.75rem; font-weight:700; padding:.18rem .55rem; border-radius:20px; }
+  .col-count.earn { background:#DCFCE7; color:#15803D; }
+  .col-count.deduct { background:#FEE2E2; color:#B91C1C; }
+
+  /* ── Drag zone ── */
+  .drag-zone {
+    min-height:140px; padding:.75rem;
+    display:flex; flex-direction:column; gap:.5rem;
+    transition:background .15s;
+  }
+  .drag-zone.over {
+    background:var(--blue-50);
+    outline:2px dashed var(--blue-400); outline-offset:-4px;
+    border-radius:var(--radius-md);
+  }
+
+  /* ── Component card ── */
+  .comp-card {
+    background:var(--white);
+    border:1.5px solid var(--gray-200);
+    border-radius:var(--radius-md);
+    display:flex; align-items:stretch;
+    overflow:hidden; transition:all .2s;
+    user-select:none;
+  }
+  .comp-card:hover { box-shadow:var(--shadow-md); border-color:var(--gray-300); }
+  .comp-card.dragging { opacity:.4; transform:scale(.98); }
+  .comp-card.placeholder { border:2px dashed var(--blue-400); background:var(--blue-50); min-height:60px; }
+
+  /* Operator badge on left edge */
+  .comp-op {
+    width:36px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+    font-size:1.1rem; font-weight:900; color:var(--white);
+  }
+  .comp-op.plus  { background:#16A34A; }
+  .comp-op.minus { background:#DC2626; }
+  .comp-op.times { background:#7C3AED; }
+  .comp-op.divide{ background:#0891B2; }
+
+  /* Drag handle */
+  .comp-drag {
+    width:28px; flex-shrink:0; cursor:grab;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:3px; padding:0 .35rem; border-right:1px solid var(--gray-100);
+  }
+  .comp-drag span { width:14px; height:2px; background:var(--gray-300); border-radius:1px; display:block; }
+  .comp-drag:active { cursor:grabbing; }
+
+  /* Locked components have no drag handle — different style */
+  .comp-card.locked .comp-drag { cursor:not-allowed; opacity:.3; }
+  .comp-card.locked { border-left:3px solid var(--gold-500); }
+
+  /* Body */
+  .comp-body { flex:1; padding:.65rem .85rem; min-width:0; }
+  .comp-name-row { display:flex; align-items:center; gap:.5rem; margin-bottom:.2rem; }
+  .comp-name { font-size:.9rem; font-weight:700; color:var(--gray-800); }
+  .comp-locked-badge {
+    font-size:.65rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em;
+    background:var(--gold-100); color:var(--gold-600);
+    border:1px solid #E5C000; border-radius:3px; padding:.05rem .4rem;
+  }
+  .comp-formula { font-family:monospace; font-size:.75rem; color:var(--gray-500); margin-top:.15rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .comp-value { font-size:.85rem; font-weight:700; color:var(--gray-700); margin-top:.15rem; }
+
+  /* Right actions */
+  .comp-actions { display:flex; align-items:center; gap:.25rem; padding:.5rem .65rem; flex-shrink:0; }
+  .comp-toggle-btn {
+    width:26px; height:26px; border-radius:var(--radius-sm);
+    border:1.5px solid var(--gray-200); background:var(--white);
+    display:flex; align-items:center; justify-content:center;
+    cursor:pointer; font-size:.8rem; transition:all .15s;
+  }
+  .comp-toggle-btn:hover { background:var(--gray-100); }
+  .comp-toggle-btn.on { background:#DCFCE7; border-color:#22C55E; color:#15803D; }
+  .comp-toggle-btn.on:hover { background:#FEE2E2; border-color:var(--danger); color:var(--danger); }
+  .comp-card.inactive { opacity:.45; filter:grayscale(.5); }
+
+  /* Locked card — edit/delete hidden */
+  .comp-card.locked .comp-edit-btn,
+  .comp-card.locked .comp-del-btn { display:none; }
+
+  /* ── Payroll Preview ── */
+  .preview-card { background:var(--white); border:1px solid var(--gray-200); border-radius:var(--radius-lg); overflow:hidden; }
+  .preview-header { padding:1rem 1.5rem; border-bottom:1px solid var(--gray-200); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.75rem; }
+  .preview-header h3 { font-size:.95rem; font-weight:800; }
+  .preview-body { padding:1.25rem 1.5rem; }
+
+  .calc-row { display:flex; align-items:center; padding:.45rem 0; border-bottom:1px dashed var(--gray-100); font-size:.88rem; }
+  .calc-row:last-child { border-bottom:none; }
+  .calc-row .op   { width:24px; text-align:center; font-weight:900; font-size:1rem; color:var(--gray-400); flex-shrink:0; }
+  .calc-row .op.plus  { color:#16A34A; }
+  .calc-row .op.minus { color:#DC2626; }
+  .calc-row .op.times { color:#7C3AED; }
+  .calc-row .op.divide{ color:#0891B2; }
+  .calc-row .name { flex:1; color:var(--gray-700); }
+  .calc-row .amount { font-weight:700; font-variant-numeric:tabular-nums; }
+  .calc-row .amount.positive { color:#16A34A; }
+  .calc-row .amount.negative { color:#DC2626; }
+  .calc-row.total { border-top:2px solid var(--gray-300); padding-top:.75rem; margin-top:.25rem; font-weight:800; font-size:.95rem; }
+  .calc-row.total .name  { color:var(--gray-800); }
+  .calc-row.total .amount{ color:var(--blue-800); font-size:1.1rem; }
+
+  .preview-grade-sel { width:auto; }
+
+  /* ── Formula builder in modal ── */
+  .formula-builder {
+    background:var(--gray-50); border:1px solid var(--gray-200);
+    border-radius:var(--radius-md); padding:.85rem 1rem; margin-top:.5rem;
+    display:none;
+  }
+  .formula-builder.visible { display:block; }
+  .formula-input {
+    font-family:monospace; font-size:.9rem;
+    background:var(--white); border:1.5px solid var(--gray-300);
+    border-radius:var(--radius-sm); padding:.55rem .85rem; width:100%;
+    outline:none; transition:border-color .2s;
+  }
+  .formula-input:focus { border-color:var(--blue-600); box-shadow:0 0 0 3px rgba(26,76,158,.1); }
+  .formula-var-btns { display:flex; flex-wrap:wrap; gap:.35rem; margin-top:.65rem; }
+  .fvar-btn {
+    font-family:monospace; font-size:.75rem; font-weight:600;
+    background:var(--blue-50); color:var(--blue-800);
+    border:1px solid var(--blue-100); border-radius:4px;
+    padding:.2rem .55rem; cursor:pointer; transition:all .15s;
+  }
+  .fvar-btn:hover { background:var(--blue-700); color:var(--white); border-color:var(--blue-700); }
+  .formula-result {
+    margin-top:.65rem; font-size:.82rem; padding:.55rem .75rem;
+    border-radius:var(--radius-sm); font-weight:600;
+  }
+  .formula-result.ok   { background:#DCFCE7; color:#15803D; }
+  .formula-result.err  { background:#FEE2E2; color:#B91C1C; }
+
+  /* ── Operator selector in modal ── */
+  .op-selector { display:flex; gap:.5rem; margin-bottom:1rem; }
+  .op-btn {
+    flex:1; padding:.55rem; border-radius:var(--radius-sm);
+    border:2px solid var(--gray-200); background:var(--white);
+    font-family:var(--font-display); font-size:1.1rem; font-weight:900;
+    cursor:pointer; transition:all .15s; text-align:center;
+  }
+  .op-btn[data-op="+"]      { color:#16A34A; }
+  .op-btn[data-op="-"]      { color:#DC2626; }
+  .op-btn[data-op="*"]      { color:#7C3AED; }
+  .op-btn[data-op="/"]      { color:#0891B2; }
+  .op-btn.active            { border-color:currentColor; background:currentColor; color:var(--white) !important; }
+  .op-btn.active[data-op="+"] { background:#16A34A; }
+  .op-btn.active[data-op="-"] { background:#DC2626; }
+  .op-btn.active[data-op="*"] { background:#7C3AED; }
+  .op-btn.active[data-op="/"] { background:#0891B2; }
+
+  /* ── Salary Grades ── */
+  .grades-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:.75rem; }
+  .grade-card {
+    background:var(--white); border:1.5px solid var(--gray-200);
+    border-radius:var(--radius-md); padding:1rem 1.1rem;
+    cursor:pointer; transition:all .2s;
+  }
+  .grade-card:hover { border-color:var(--blue-600); box-shadow:var(--shadow-sm); }
+  .grade-card h4 { font-size:.9rem; font-weight:800; margin-bottom:.35rem; }
+  .grade-salary  { font-size:1.2rem; font-weight:800; color:var(--blue-800); }
+  .grade-sub     { font-size:.75rem; color:var(--gray-400); margin-top:.15rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="salary-page">
+
+  <!-- ── Variable Reference Bar ── -->
+  <div class="var-ref">
+    <h4>📐 Available Formula Variables — click to copy</h4>
+    <div class="var-chips">
+      {% for v in formula_variables %}
+      <span class="var-chip" onclick="copyVar('{{ v.name }}')" title="{{ v.description }}">{{ v.name }}</span>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- ── Drag & Drop Columns ── -->
+  <div class="salary-cols">
+
+    <!-- EARNINGS -->
+    <div class="card">
+      <div class="col-head">
+        <div>
+          <h3>💵 Earnings</h3>
+          <div style="font-size:.75rem;color:var(--gray-400);margin-top:.15rem;">Drag to reorder. 🔒 = locked default.</div>
+        </div>
+        <span class="col-count earn" id="earn-count">0</span>
+      </div>
+      <div class="drag-zone" id="zone-earning" data-type="earning"
+           ondragover="onOver(event,this)" ondrop="onDrop(event,this)" ondragleave="onLeave(this)">
+        {% for c in earnings %}
+        {% include "hrms/partials/comp_card.html" with comp=c %}
+        {% empty %}
+        <div style="text-align:center;padding:2rem;color:var(--gray-400);font-size:.85rem;">
+          No earnings components.
+          <button class="btn btn-outline btn-sm" style="display:block;margin:.75rem auto 0;"
+                  onclick="openAddModal('earning')">+ Add Earning</button>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- DEDUCTIONS -->
+    <div class="card">
+      <div class="col-head">
+        <div>
+          <h3>📉 Deductions</h3>
+          <div style="font-size:.75rem;color:var(--gray-400);margin-top:.15rem;">Drag to reorder. 🔒 = locked default.</div>
+        </div>
+        <span class="col-count deduct" id="deduct-count">0</span>
+      </div>
+      <div class="drag-zone" id="zone-deduction" data-type="deduction"
+           ondragover="onOver(event,this)" ondrop="onDrop(event,this)" ondragleave="onLeave(this)">
+        {% for c in deductions %}
+        {% include "hrms/partials/comp_card.html" with comp=c %}
+        {% empty %}
+        <div style="text-align:center;padding:2rem;color:var(--gray-400);font-size:.85rem;">
+          No deduction components.
+          <button class="btn btn-outline btn-sm" style="display:block;margin:.75rem auto 0;"
+                  onclick="openAddModal('deduction')">+ Add Deduction</button>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── Live Payroll Preview ── -->
+  <div class="preview-card">
+    <div class="preview-header">
+      <h3>📊 Live Payroll Preview</h3>
+      <div style="display:flex;align-items:center;gap:.75rem;flex-wrap:wrap;">
+        <label style="font-size:.82rem;font-weight:600;color:var(--gray-600);">Grade:</label>
+        <select class="form-control preview-grade-sel" id="preview-grade" onchange="runPreview()">
+          {% for sg in salary_grades %}
+          <option value="{{ sg.base_salary }}" data-name="{{ sg.name }}">
+            {{ sg.name }} — ₱{{ sg.base_salary|floatformat:"2g" }}
+          </option>
+          {% endfor %}
+        </select>
+        <label style="font-size:.82rem;font-weight:600;color:var(--gray-600);">Days Present:</label>
+        <input type="number" id="preview-days" value="22" min="0" max="31"
+               class="form-control" style="width:80px;" oninput="runPreview()">
+        <label style="font-size:.82rem;font-weight:600;color:var(--gray-600);">OT Hours:</label>
+        <input type="number" id="preview-ot" value="0" min="0" step="0.5"
+               class="form-control" style="width:80px;" oninput="runPreview()">
+      </div>
+    </div>
+    <div class="preview-body" id="preview-body">
+      <!-- populated by JS -->
+    </div>
+  </div>
+
+  <!-- ── Salary Grades ── -->
+  <div class="card">
+    <div class="card-header">
+      <h3>📊 Salary Grades</h3>
+      <button class="btn btn-outline btn-sm" onclick="openModal('add-grade-modal')">+ Add Grade</button>
+    </div>
+    <div class="card-body">
+      <div class="grades-grid">
+        {% for sg in salary_grades %}
+        <div class="grade-card" onclick="editGrade({{ sg.id }}, '{{ sg.name|escapejs }}', '{{ sg.base_salary }}', '{{ sg.overtime_rate }}')">
+          <h4>{{ sg.name }}</h4>
+          <div class="grade-salary">₱{{ sg.base_salary|floatformat:"2g" }}</div>
+          <div class="grade-sub">OT Rate: ₱{{ sg.overtime_rate|floatformat:"2g" }}/hr</div>
+          <div style="margin-top:.5rem;">
+            <span class="badge badge-blue" style="font-size:.68rem;">{{ sg.employees_count|default:0 }} employees</span>
+          </div>
+        </div>
+        {% empty %}
+        <p class="text-sm text-gray">No salary grades yet.</p>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+</div><!-- /salary-page -->
+
+
+<!-- ══════════════════════════════════════════════════
+     ADD / EDIT COMPONENT MODAL
+══════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="add-component-modal">
+  <div class="modal" style="width:min(600px,96vw);">
+    <div class="modal-header">
+      <h2 id="comp-modal-title">Add Payroll Component</h2>
+      <button class="btn-close" onclick="closeModal('add-component-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="comp-form" method="post" action="{% url 'payroll:create_component' %}">
+        {% csrf_token %}
+        <input type="hidden" id="comp-id" name="component_id">
+        <input type="hidden" id="comp-formula-hidden" name="formula">
+
+        <!-- Name -->
+        <div class="form-group" style="margin-bottom:1rem;">
+          <label class="form-label">Component Name <span style="color:var(--danger)">*</span></label>
+          <input type="text" name="name" id="comp-name" class="form-control"
+                 placeholder="e.g. Rice Allowance, SSS Contribution" required>
+        </div>
+
+        <!-- Type -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.9rem;margin-bottom:1rem;">
+          <div class="form-group">
+            <label class="form-label">Component Type <span style="color:var(--danger)">*</span></label>
+            <select name="type" id="comp-type" class="form-control" required onchange="updateCompTypeUI()">
+              <option value="earning">💵 Earning</option>
+              <option value="deduction">📉 Deduction</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Status</label>
+            <select name="is_active" id="comp-status" class="form-control">
+              <option value="true">Active</option>
+              <option value="false">Inactive</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Operator -->
+        <div class="form-group" style="margin-bottom:1rem;">
+          <label class="form-label">
+            Operator
+            <span style="font-size:.72rem;color:var(--gray-400);font-weight:400;margin-left:.4rem;">How this component is applied to the running total</span>
+          </label>
+          <div class="op-selector" id="op-selector">
+            <button type="button" class="op-btn active" data-op="+" onclick="selectOp(this)">+</button>
+            <button type="button" class="op-btn" data-op="-" onclick="selectOp(this)">−</button>
+            <button type="button" class="op-btn" data-op="*" onclick="selectOp(this)">×</button>
+            <button type="button" class="op-btn" data-op="/" onclick="selectOp(this)">÷</button>
+          </div>
+          <input type="hidden" name="operator" id="comp-operator" value="+">
+          <div id="op-hint" style="font-size:.75rem;color:var(--gray-500);margin-top:.3rem;">
+            + adds to the running total
+          </div>
+        </div>
+
+        <!-- Calculation Type -->
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Calculation Method <span style="color:var(--danger)">*</span></label>
+          <select name="calculation_type" id="comp-calc" class="form-control" required onchange="updateCalcUI()">
+            <option value="fixed">Fixed Amount (₱)</option>
+            <option value="percentage">% of a Variable</option>
+            <option value="formula">Custom Formula</option>
+          </select>
+        </div>
+
+        <!-- Fixed amount -->
+        <div id="fixed-group" class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Fixed Amount (₱)</label>
+          <input type="number" name="default_value" id="comp-value" class="form-control"
+                 step="0.01" min="0" placeholder="0.00">
+        </div>
+
+        <!-- Percentage -->
+        <div id="pct-group" style="display:none;margin-bottom:.9rem;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:.9rem;">
+            <div class="form-group">
+              <label class="form-label">Percentage (%)</label>
+              <input type="number" name="pct_value" id="comp-pct" class="form-control"
+                     step="0.001" min="0" max="100" placeholder="e.g. 4.5"
+                     oninput="syncPctToValue()">
+            </div>
+            <div class="form-group">
+              <label class="form-label">% of Variable</label>
+              <select name="pct_base" id="comp-pct-base" class="form-control" onchange="syncPctToValue()">
+                {% for v in formula_variables %}
+                <option value="{{ v.name }}">{{ v.label }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+          <div style="font-size:.75rem;color:var(--gray-500);margin-top:.35rem;" id="pct-preview">—</div>
+        </div>
+
+        <!-- Custom formula -->
+        <div id="formula-group" style="display:none;">
+          <div class="formula-builder visible">
+            <label class="form-label" style="margin-bottom:.5rem;">Formula Expression</label>
+            <input type="text" id="formula-input" class="formula-input"
+                   placeholder="e.g. basic_pay * 0.045"
+                   oninput="validateFormula()">
+            <div class="formula-var-btns" id="formula-var-btns">
+              {% for v in formula_variables %}
+              <button type="button" class="fvar-btn"
+                      onclick="insertVar('{{ v.name }}')">{{ v.name }}</button>
+              {% endfor %}
+              <button type="button" class="fvar-btn" style="background:var(--gray-100);color:var(--gray-600);" onclick="insertVar(' + ')">+</button>
+              <button type="button" class="fvar-btn" style="background:var(--gray-100);color:var(--gray-600);" onclick="insertVar(' - ')">−</button>
+              <button type="button" class="fvar-btn" style="background:var(--gray-100);color:var(--gray-600);" onclick="insertVar(' * ')">×</button>
+              <button type="button" class="fvar-btn" style="background:var(--gray-100);color:var(--gray-600);" onclick="insertVar(' / ')">÷</button>
+              <button type="button" class="fvar-btn" style="background:var(--gray-100);color:var(--gray-600);" onclick="insertVar('(')"> ( </button>
+              <button type="button" class="fvar-btn" style="background:var(--gray-100);color:var(--gray-600);" onclick="insertVar(')')"> ) </button>
+            </div>
+            <div class="formula-result" id="formula-result" style="display:none;"></div>
+          </div>
+        </div>
+
+        <!-- Description -->
+        <div class="form-group" style="margin-top:.9rem;">
+          <label class="form-label">Description / Notes</label>
+          <textarea name="description" id="comp-desc" class="form-control" rows="2"
+                    placeholder="Optional. Appears on payslip breakdown."></textarea>
+        </div>
+
+      </form>
+    </div>
+    <div class="modal-footer">
+      <div style="font-size:.78rem;color:var(--gray-400);margin-right:auto;" id="comp-modal-hint"></div>
+      <button class="btn btn-outline" onclick="closeModal('add-component-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitCompForm()">💾 Save Component</button>
+    </div>
+  </div>
+</div>
+
+<!-- Salary Grade Modal (reused from salary_grades.html) -->
+<div class="modal-backdrop" id="add-grade-modal">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header">
+      <h2 id="grade-modal-title">Add Salary Grade</h2>
+      <button class="btn-close" onclick="closeModal('add-grade-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="grade-form" method="post" action="{% url 'employees:create_grade' %}">
+        {% csrf_token %}
+        <input type="hidden" id="grade-id" name="grade_id">
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Grade Name <span style="color:var(--danger)">*</span></label>
+          <input type="text" name="name" id="grade-name" class="form-control"
+                 placeholder="e.g. Grade 1, Junior Staff" required>
+        </div>
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Base Monthly Salary (₱) <span style="color:var(--danger)">*</span></label>
+          <input type="number" name="base_salary" id="grade-base" class="form-control"
+                 step="0.01" min="0" placeholder="18000.00" required oninput="suggestGradeOT()">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Overtime Rate (₱/hr) <span style="color:var(--danger)">*</span></label>
+          <input type="number" name="overtime_rate" id="grade-ot" class="form-control"
+                 step="0.01" min="0" placeholder="112.50" required>
+          <div style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem;" id="grade-ot-hint"></div>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('add-grade-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="document.getElementById('grade-form').submit()">💾 Save Grade</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete component confirm -->
+<div class="modal-backdrop" id="del-comp-modal">
+  <div class="modal" style="max-width:380px;">
+    <div class="modal-header"><h2>Delete Component</h2><button class="btn-close" onclick="closeModal('del-comp-modal')">✕</button></div>
+    <div class="modal-body" style="text-align:center;padding:2rem;">
+      <div style="font-size:3rem;margin-bottom:.75rem;">⚠️</div>
+      <p>Delete <strong id="del-comp-name"></strong>?</p>
+      <p class="text-sm text-gray mt-2">This may affect existing payroll calculations.</p>
+    </div>
+    <div class="modal-footer" style="justify-content:center;gap:.75rem;">
+      <button class="btn btn-outline" onclick="closeModal('del-comp-modal')">Cancel</button>
+      <button class="btn btn-danger" id="confirm-del-comp">Delete</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- ── Component data from Django ── -->
+<script>
+  // Serialised component list for preview calculator
+  const COMPONENTS = {{ components_json|safe|default:"[]" }};
+
+  // Formula variables for validation
+  const VARS = {{ variables_json|safe|default:"{}" }};
+
+  /* ═══════════════════════════════════════════════════════════════
+     DRAG & DROP
+  ═══════════════════════════════════════════════════════════════ */
+  let dragging = null;
+
+  function onStart(e, el) {
+    if (el.classList.contains('locked')) { e.preventDefault(); return; }
+    dragging = el;
+    el.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+  }
+  function onEnd(e, el) {
+    el.classList.remove('dragging');
+    document.querySelectorAll('.placeholder').forEach(p => p.remove());
+    dragging = null;
+  }
+  function onOver(e, zone) {
+    e.preventDefault();
+    zone.classList.add('over');
+    const after = getAfter(zone, e.clientY);
+    const ph = document.querySelector('.placeholder') || makePlaceholder();
+    after ? zone.insertBefore(ph, after) : zone.appendChild(ph);
+  }
+  function onLeave(zone) { zone.classList.remove('over'); }
+  function onDrop(e, zone) {
+    e.preventDefault();
+    zone.classList.remove('over');
+    const ph = document.querySelector('.placeholder');
+    if (ph && dragging) zone.insertBefore(dragging, ph);
+    else if (dragging) zone.appendChild(dragging);
+    ph?.remove();
+    updateCounts();
+    runPreview();
+  }
+  function makePlaceholder() {
+    const el = document.createElement('div');
+    el.className = 'comp-card placeholder';
+    return el;
+  }
+  function getAfter(zone, y) {
+    const cards = [...zone.querySelectorAll('.comp-card:not(.dragging):not(.placeholder)')];
+    return cards.reduce((cl, ch) => {
+      const box    = ch.getBoundingClientRect();
+      const offset = y - box.top - box.height / 2;
+      return offset < 0 && offset > cl.offset ? { offset, el: ch } : cl;
+    }, { offset: Number.NEGATIVE_INFINITY }).el;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     COUNTS
+  ═══════════════════════════════════════════════════════════════ */
+  function updateCounts() {
+    document.getElementById('earn-count').textContent =
+      document.querySelectorAll('#zone-earning .comp-card:not(.inactive)').length + ' active';
+    document.getElementById('deduct-count').textContent =
+      document.querySelectorAll('#zone-deduction .comp-card:not(.inactive)').length + ' active';
+  }
+  document.addEventListener('DOMContentLoaded', updateCounts);
+
+  /* ═══════════════════════════════════════════════════════════════
+     TOGGLE ACTIVE
+  ═══════════════════════════════════════════════════════════════ */
+  async function toggleComp(id, btn) {
+    const res = await apiPost("{% url 'payroll:toggle_component' %}", { id });
+    if (res.is_active) {
+      btn.classList.replace('off','on'); btn.textContent = '✓';
+      btn.closest('.comp-card').classList.remove('inactive');
+    } else {
+      btn.classList.replace('on','off'); btn.textContent = '✗';
+      btn.closest('.comp-card').classList.add('inactive');
+    }
+    updateCounts(); runPreview();
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     SAVE ORDER
+  ═══════════════════════════════════════════════════════════════ */
+  async function saveOrder() {
+    const order = [...document.querySelectorAll('.comp-card[data-id]')].map((el, i) => ({
+      id:   parseInt(el.dataset.id),
+      order: i,
+      type: el.closest('.drag-zone').dataset.type,
+    }));
+    const res = await apiPost("{% url 'payroll:reorder_components' %}", { order });
+    if (res.ok) showToast('Component order saved!', 'success');
+    else showToast('Error saving order.', 'error');
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     ADD / EDIT MODAL
+  ═══════════════════════════════════════════════════════════════ */
+  function openAddModal(type = 'earning') {
+    document.getElementById('comp-modal-title').textContent = 'Add Payroll Component';
+    document.getElementById('comp-id').value       = '';
+    document.getElementById('comp-name').value     = '';
+    document.getElementById('comp-type').value     = type;
+    document.getElementById('comp-status').value   = 'true';
+    document.getElementById('comp-value').value    = '';
+    document.getElementById('comp-pct').value      = '';
+    document.getElementById('comp-desc').value     = '';
+    document.getElementById('formula-input').value = '';
+    selectOp(document.querySelector('.op-btn[data-op="+"]'));
+    document.getElementById('comp-calc').value     = 'fixed';
+    updateCalcUI();
+    updateCompTypeUI();
+    document.getElementById('comp-modal-hint').textContent = '';
+    document.getElementById('comp-form').action = "{% url 'payroll:create_component' %}";
+    openModal('add-component-modal');
+  }
+
+  async function editComp(id) {
+    const res = await fetch("{% url 'payroll:get_component' pk=0 %}".replace('/0/', `/${id}/`));
+    const c   = await res.json();
+    document.getElementById('comp-modal-title').textContent = 'Edit Component';
+    document.getElementById('comp-id').value       = c.id;
+    document.getElementById('comp-name').value     = c.name;
+    document.getElementById('comp-type').value     = c.type;
+    document.getElementById('comp-status').value   = c.is_active ? 'true' : 'false';
+    document.getElementById('comp-calc').value     = c.calculation_type;
+    document.getElementById('comp-value').value    = c.default_value;
+    document.getElementById('comp-desc').value     = c.description || '';
+    document.getElementById('formula-input').value = c.formula || '';
+
+    // Operator
+    const opMap = { '+': '+', '-': '-', '*': '*', '/': '/' };
+    const opBtn = document.querySelector(`.op-btn[data-op="${c.operator || '+'}"]`);
+    if (opBtn) selectOp(opBtn);
+
+    updateCalcUI();
+    updateCompTypeUI();
+    document.getElementById('comp-modal-hint').textContent = '';
+    document.getElementById('comp-form').action =
+      "{% url 'payroll:update_component' pk=0 %}".replace('/0/', `/${id}/`);
+    openModal('add-component-modal');
+  }
+
+  function deleteComp(id, name) {
+    document.getElementById('del-comp-name').textContent = name;
+    document.getElementById('confirm-del-comp').onclick = () => {
+      const f = document.createElement('form');
+      f.method = 'post';
+      f.action = "{% url 'payroll:delete_component' pk=0 %}".replace('/0/', `/${id}/`);
+      f.innerHTML = '{% csrf_token %}';
+      document.body.appendChild(f); f.submit();
+    };
+    openModal('del-comp-modal');
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     OPERATOR SELECTOR
+  ═══════════════════════════════════════════════════════════════ */
+  const OP_HINTS = {
+    '+': '+ adds this amount to the running total',
+    '-': '− subtracts this amount from the running total',
+    '*': '× multiplies the running total by this value',
+    '/': '÷ divides the running total by this value',
+  };
+  function selectOp(btn) {
+    document.querySelectorAll('.op-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('comp-operator').value = btn.dataset.op;
+    document.getElementById('op-hint').textContent = OP_HINTS[btn.dataset.op] || '';
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     CALCULATION TYPE UI
+  ═══════════════════════════════════════════════════════════════ */
+  function updateCalcUI() {
+    const t = document.getElementById('comp-calc').value;
+    document.getElementById('fixed-group').style.display   = t === 'fixed'      ? '' : 'none';
+    document.getElementById('pct-group').style.display     = t === 'percentage' ? '' : 'none';
+    document.getElementById('formula-group').style.display = t === 'formula'    ? '' : 'none';
+    if (t === 'percentage') syncPctToValue();
+  }
+
+  function updateCompTypeUI() {
+    const t = document.getElementById('comp-type').value;
+    const defOp = t === 'earning' ? '+' : '-';
+    const opBtn = document.querySelector(`.op-btn[data-op="${defOp}"]`);
+    if (opBtn && !document.querySelector('.op-btn.active')) selectOp(opBtn);
+  }
+
+  function syncPctToValue() {
+    const pct  = parseFloat(document.getElementById('comp-pct').value) || 0;
+    const base = document.getElementById('comp-pct-base').value;
+    document.getElementById('comp-value').value = pct;
+    document.getElementById('comp-modal-hint').textContent = '';
+    const previewBase = parseFloat(document.getElementById('preview-grade').value) || 18000;
+    const baseVal     = getSampleVar(base, previewBase);
+    if (baseVal) {
+      const amount = baseVal * (pct / 100);
+      document.getElementById('pct-preview').textContent =
+        `Sample: ${pct}% of ₱${fmt(baseVal)} (${base}) = ₱${fmt(amount)}`;
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     FORMULA BUILDER
+  ═══════════════════════════════════════════════════════════════ */
+  function insertVar(v) {
+    const inp = document.getElementById('formula-input');
+    const s   = inp.selectionStart, e = inp.selectionEnd;
+    inp.value = inp.value.slice(0, s) + v + inp.value.slice(e);
+    inp.setSelectionRange(s + v.length, s + v.length);
+    inp.focus();
+    validateFormula();
+  }
+
+  function validateFormula() {
+    const raw    = document.getElementById('formula-input').value.trim();
+    const resEl  = document.getElementById('formula-result');
+    document.getElementById('comp-formula-hidden').value = raw;
+    if (!raw) { resEl.style.display = 'none'; return; }
+    const previewBase = parseFloat(document.getElementById('preview-grade').value) || 18000;
+    const result = evalFormulaSafe(raw, buildSampleVars(previewBase));
+    resEl.style.display = '';
+    if (result !== null) {
+      resEl.className = 'formula-result ok';
+      resEl.textContent = `✓ Valid — sample result: ₱${fmt(result)}`;
+    } else {
+      resEl.className = 'formula-result err';
+      resEl.textContent = '✕ Invalid formula. Check variable names and operators.';
+    }
+  }
+
+  function evalFormulaSafe(expr, vars) {
+    try {
+      let e = expr;
+      for (const [k, v] of Object.entries(vars)) {
+        e = e.replaceAll(k, String(v));
+      }
+      if (!/^[\d\.\+\-\*\/\(\)\s]+$/.test(e)) return null;
+      const r = Function('"use strict"; return (' + e + ')')();
+      return isFinite(r) ? r : null;
+    } catch { return null; }
+  }
+
+  function buildSampleVars(basicPay) {
+    const days = parseFloat(document.getElementById('preview-days')?.value) || 22;
+    const ot   = parseFloat(document.getElementById('preview-ot')?.value)   || 0;
+    const daily = basicPay / 22;
+    const hourly = daily / 8;
+    return {
+      basic_pay:      basicPay,
+      daily_rate:     daily,
+      hourly_rate:    hourly,
+      days_present:   days,
+      days_absent:    22 - days,
+      ot_hours:       ot,
+      gross_pay:      basicPay,   // approximation at build time
+      working_days:   22,
+    };
+  }
+
+  function getSampleVar(name, basicPay) {
+    return buildSampleVars(basicPay)[name] || basicPay;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     SUBMIT COMPONENT FORM
+  ═══════════════════════════════════════════════════════════════ */
+  function submitCompForm() {
+    const calc = document.getElementById('comp-calc').value;
+    if (calc === 'formula') {
+      const raw = document.getElementById('formula-input').value.trim();
+      document.getElementById('comp-formula-hidden').value = raw;
+      const result = evalFormulaSafe(raw, buildSampleVars(18000));
+      if (result === null) {
+        showToast('Formula is invalid. Please check and try again.', 'error');
+        return;
+      }
+    }
+    document.getElementById('comp-form').submit();
+  }
+
+  /* ═══════════════════════════════════════════════════════════════
+     LIVE PAYROLL PREVIEW
+  ═══════════════════════════════════════════════════════════════ */
+  function fmt(n) {
+    return (parseFloat(n)||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
+  }
+
+  function runPreview() {
+    const basicPay  = parseFloat(document.getElementById('preview-grade').value) || 0;
+    const days      = parseFloat(document.getElementById('preview-days').value)  || 22;
+    const otHours   = parseFloat(document.getElementById('preview-ot').value)    || 0;
+    const gradeName = document.getElementById('preview-grade').selectedOptions[0]?.dataset.name || '';
+
+    const vars = buildSampleVars(basicPay);
+    vars.ot_hours    = otHours;
+    vars.days_present= days;
+    vars.days_absent = 22 - days;
+
+    let running  = basicPay;
+    let rows     = `<div class="calc-row">
+                      <span class="op">₱</span>
+                      <span class="name"><strong>Basic Pay</strong> — ${gradeName}</span>
+                      <span class="amount positive">₱${fmt(basicPay)}</span>
+                    </div>`;
+
+    // Walk all active components in DOM order
+    const cards = [...document.querySelectorAll('.comp-card[data-id]:not(.inactive)')];
+    for (const card of cards) {
+      const id   = parseInt(card.dataset.id);
+      const comp = COMPONENTS.find(c => c.id === id);
+      if (!comp) continue;
+
+      const amount = computeComp(comp, vars, running);
+      const op     = comp.operator || (comp.type === 'earning' ? '+' : '-');
+      vars.gross_pay = running; // update for next formula
+
+      const opLabel = { '+':'plus', '-':'minus', '*':'times', '/':'divide' }[op] || 'plus';
+      const opChar  = { '+':'+', '-':'−', '*':'×', '/':'÷' }[op] || op;
+      const sign    = (op === '-') ? 'negative' : 'positive';
+
+      rows += `<div class="calc-row">
+                 <span class="op ${opLabel}">${opChar}</span>
+                 <span class="name">${comp.name}</span>
+                 <span class="amount ${sign}">₱${fmt(Math.abs(amount))}</span>
+               </div>`;
+
+      if (op === '+') running += amount;
+      else if (op === '-') running -= amount;
+      else if (op === '*') running *= amount;
+      else if (op === '/') running = amount !== 0 ? running / amount : running;
+    }
+
+    rows += `<div class="calc-row total">
+               <span class="op"></span>
+               <span class="name">= Net Pay</span>
+               <span class="amount">₱${fmt(running)}</span>
+             </div>`;
+
+    document.getElementById('preview-body').innerHTML = rows;
+  }
+
+  function computeComp(comp, vars, running) {
+    const val = parseFloat(comp.default_value) || 0;
+    if (comp.calculation_type === 'fixed') return val;
+    if (comp.calculation_type === 'percentage') {
+      const base = vars[comp.pct_base || 'basic_pay'] || vars.basic_pay;
+      return base * (val / 100);
+    }
+    if (comp.calculation_type === 'formula' && comp.formula) {
+      const res = evalFormulaSafe(comp.formula, vars);
+      return res !== null ? res : 0;
+    }
+    return val;
+  }
+
+  document.addEventListener('DOMContentLoaded', runPreview);
+
+  /* ═══════════════════════════════════════════════════════════════
+     MISC
+  ═══════════════════════════════════════════════════════════════ */
+  function copyVar(name) {
+    navigator.clipboard.writeText(name).then(() => showToast(`Copied: ${name}`, 'info'));
+  }
+
+  function editGrade(id, name, base, ot) {
+    document.getElementById('grade-modal-title').textContent = 'Edit Salary Grade';
+    document.getElementById('grade-id').value   = id;
+    document.getElementById('grade-name').value = name;
+    document.getElementById('grade-base').value = base;
+    document.getElementById('grade-ot').value   = ot;
+    document.getElementById('grade-form').action = `/employees/salary-grades/${id}/update/`;
+    openModal('add-grade-modal');
+  }
+
+  function suggestGradeOT() {
+    const base = parseFloat(document.getElementById('grade-base').value) || 0;
+    if (base > 0) {
+      const suggested = (base / 22 / 8 * 1.25).toFixed(2);
+      document.getElementById('grade-ot').placeholder = suggested;
+      document.getElementById('grade-ot-hint').textContent =
+        `Suggested: ₱${suggested}/hr (hourly rate × 1.25 OT multiplier)`;
+    }
+  }
+</script>
+{% endblock %}

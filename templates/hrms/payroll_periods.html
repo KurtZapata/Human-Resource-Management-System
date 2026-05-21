@@ -1,0 +1,274 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Payroll Periods{% endblock %}
+{% block page_title %}Payroll Periods{% endblock %}
+{% block breadcrumb %}Payroll › Periods{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-gold btn-sm" onclick="openModal('add-period-modal')">+ New Period</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .periods-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(300px,1fr)); gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .period-card {
+    background: var(--white); border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius-lg); padding: 1.25rem 1.4rem;
+    box-shadow: var(--shadow-sm); position: relative; overflow: hidden; transition: all .2s;
+  }
+  .period-card:hover { border-color: var(--blue-400); box-shadow: var(--shadow-md); }
+  .period-card.open       { border-left: 4px solid var(--blue-600); }
+  .period-card.processing { border-left: 4px solid var(--warning); }
+  .period-card.closed     { border-left: 4px solid var(--success); }
+
+  .period-dates {
+    font-size: 1rem; font-weight: 800; color: var(--gray-900); margin-bottom: .45rem;
+  }
+  .period-range { font-size: .8rem; color: var(--gray-400); margin-bottom: .85rem; }
+  .period-meta  { display: flex; gap: .75rem; flex-wrap: wrap; margin-bottom: .85rem; font-size: .82rem; }
+  .period-meta-item { display: flex; flex-direction: column; gap: .1rem; }
+  .period-meta-item .label { font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--gray-400); }
+  .period-meta-item .val   { font-weight: 700; color: var(--gray-800); }
+  .period-actions { display: flex; gap: .4rem; border-top: 1px dashed var(--gray-200); padding-top: .85rem; }
+
+  /* Timeline list for smaller view */
+  .period-timeline { position: relative; padding-left: 1.75rem; }
+  .period-timeline::before {
+    content: ''; position: absolute; left: .55rem; top: 0; bottom: 0;
+    width: 2px; background: var(--gray-200); border-radius: 1px;
+  }
+  .timeline-item { position: relative; margin-bottom: 1rem; }
+  .timeline-dot {
+    position: absolute; left: -1.2rem; top: .3rem;
+    width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--white);
+    box-shadow: 0 0 0 2px var(--blue-600);
+    background: var(--blue-600);
+  }
+  .timeline-dot.closed { background: var(--success); box-shadow: 0 0 0 2px var(--success); }
+  .timeline-dot.open   { background: var(--blue-600); }
+  .timeline-dot.processing { background: var(--warning); box-shadow: 0 0 0 2px var(--warning); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Stats -->
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;">
+  <div class="stat-card">
+    <div class="stat-icon blue">📅</div>
+    <div><div class="stat-num">{{ periods|length }}</div><div class="stat-label">Total Periods</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon green">✅</div>
+    <div><div class="stat-num">{{ stats.open }}</div><div class="stat-label">Open</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon gold">⚙</div>
+    <div><div class="stat-num">{{ stats.processing }}</div><div class="stat-label">Processing</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon" style="background:#DCFCE7;color:#15803D;">🔒</div>
+    <div><div class="stat-num">{{ stats.closed }}</div><div class="stat-label">Closed</div></div>
+  </div>
+</div>
+
+<!-- Periods Grid -->
+<div class="periods-grid">
+  {% for period in periods %}
+  <div class="period-card {{ period.status }}">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:.65rem;">
+      <div>
+        <div class="period-dates">
+          {{ period.start_date|date:"M d" }} – {{ period.end_date|date:"M d, Y" }}
+        </div>
+        <div class="period-range">
+          {{ period.start_date|date:"l" }} to {{ period.end_date|date:"l" }}
+        </div>
+      </div>
+      <span class="badge
+        {% if period.status == 'open' %}badge-blue
+        {% elif period.status == 'processing' %}badge-warning
+        {% else %}badge-success{% endif %}">
+        {{ period.status|title }}
+      </span>
+    </div>
+
+    <div class="period-meta">
+      <div class="period-meta-item">
+        <span class="label">Employees</span>
+        <span class="val">{{ period.payroll_count|default:"0" }}</span>
+      </div>
+      <div class="period-meta-item">
+        <span class="label">Confirmed</span>
+        <span class="val">{{ period.confirmed_count|default:"0" }}</span>
+      </div>
+      <div class="period-meta-item">
+        <span class="label">Net Pay Total</span>
+        <span class="val">₱{{ period.total_net|floatformat:"0"|default:"0" }}</span>
+      </div>
+      <div class="period-meta-item">
+        <span class="label">Created</span>
+        <span class="val">{{ period.created_at|date:"M d, Y" }}</span>
+      </div>
+    </div>
+
+    <div class="period-actions">
+      {% if period.status == 'open' %}
+        <a href="{% url 'payroll:run' %}?period_id={{ period.id }}" class="btn btn-primary btn-sm" style="flex:1;">
+          ▶ Run Payroll
+        </a>
+        <a href="{% url 'payroll:report' %}?period_id={{ period.id }}" class="btn btn-outline btn-sm" style="flex:1;">
+          📋 Report
+        </a>
+        <button class="btn btn-sm" style="background:#FEF3C7;color:#B45309;border:1px solid #FDE68A;"
+                onclick="closePeriod({{ period.id }}, '{{ period.start_date|date:'M d' }} – {{ period.end_date|date:'M d, Y' }}')">
+          🔒 Close
+        </button>
+      {% elif period.status == 'closed' %}
+        <a href="{% url 'payroll:report' %}?period_id={{ period.id }}" class="btn btn-outline btn-sm" style="flex:1;">
+          📋 View Report
+        </a>
+        <a href="{% url 'payroll:export_payroll' %}?period_id={{ period.id }}" class="btn btn-outline btn-sm" style="flex:1;">
+          ⬇ Export
+        </a>
+      {% else %}
+        <span class="text-sm text-gray">Processing in progress…</span>
+      {% endif %}
+    </div>
+  </div>
+  {% empty %}
+  <div style="grid-column:1/-1;text-align:center;padding:3rem;color:var(--gray-400);">
+    <div style="font-size:2.5rem;margin-bottom:.75rem;">📅</div>
+    No payroll periods yet. Create your first one.
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Timeline / Full List -->
+{% if periods %}
+<div class="card">
+  <div class="card-header"><h3>All Periods Timeline</h3></div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Period</th>
+          <th>Start Date</th>
+          <th>End Date</th>
+          <th>Working Days</th>
+          <th style="text-align:right;">Total Net Pay</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for period in periods %}
+        <tr>
+          <td><strong>{{ period.start_date|date:"M d" }} – {{ period.end_date|date:"M d, Y" }}</strong></td>
+          <td>{{ period.start_date|date:"Y-m-d" }}</td>
+          <td>{{ period.end_date|date:"Y-m-d" }}</td>
+          <td>{{ period.working_days|default:"—" }}</td>
+          <td style="text-align:right;font-weight:700;color:var(--blue-800);">
+            ₱{{ period.total_net|floatformat:"2"|default:"0.00" }}
+          </td>
+          <td>
+            <span class="badge {% if period.status == 'open' %}badge-blue{% elif period.status == 'processing' %}badge-warning{% else %}badge-success{% endif %}">
+              {{ period.status|title }}
+            </span>
+          </td>
+          <td>
+            <div style="display:flex;gap:.35rem;">
+              <a href="{% url 'payroll:report' %}?period_id={{ period.id }}" class="btn btn-outline btn-sm">📋 Report</a>
+              {% if period.status == 'open' %}
+                <a href="{% url 'payroll:run' %}?period_id={{ period.id }}" class="btn btn-primary btn-sm">▶ Run</a>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- ══ ADD PERIOD MODAL ══ -->
+<div class="modal-backdrop" id="add-period-modal">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header">
+      <h2>Create Payroll Period</h2>
+      <button class="btn-close" onclick="closeModal('add-period-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="period-form" method="post" action="{% url 'payroll:periods' %}">
+        {% csrf_token %}
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Start Date <span style="color:var(--danger)">*</span></label>
+          <input type="date" name="start_date" id="period-start" class="form-control"
+                 required onchange="suggestEndDate()">
+        </div>
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">End Date <span style="color:var(--danger)">*</span></label>
+          <input type="date" name="end_date" id="period-end" class="form-control" required>
+        </div>
+        <div style="background:var(--blue-50);border-radius:var(--radius-sm);padding:.7rem .9rem;font-size:.82rem;color:var(--blue-800);">
+          💡 Tip: Common period types are semi-monthly (1st–15th, 16th–end of month) or monthly.
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('add-period-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="document.getElementById('period-form').submit()">📅 Create Period</button>
+    </div>
+  </div>
+</div>
+
+<!-- Close Period Confirm -->
+<div class="modal-backdrop" id="close-period-modal">
+  <div class="modal" style="max-width:400px;">
+    <div class="modal-header"><h2>Close Period</h2><button class="btn-close" onclick="closeModal('close-period-modal')">✕</button></div>
+    <div class="modal-body" style="text-align:center;padding:2rem;">
+      <div style="font-size:3rem;margin-bottom:.75rem;">🔒</div>
+      <p>Close period <strong id="close-period-label"></strong>?</p>
+      <p class="text-sm text-gray mt-2">This locks the period. No further payroll changes can be made.</p>
+    </div>
+    <div class="modal-footer" style="justify-content:center;gap:.75rem;">
+      <button class="btn btn-outline" onclick="closeModal('close-period-modal')">Cancel</button>
+      <button class="btn btn-danger" id="confirm-close-btn">🔒 Close Period</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  function suggestEndDate() {
+    const start = document.getElementById('period-start').value;
+    if (!start) return;
+    const d = new Date(start + 'T00:00:00');
+    const day = d.getDate();
+    let end;
+    if (day === 1) {
+      end = new Date(d.getFullYear(), d.getMonth(), 15);
+    } else if (day === 16) {
+      end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    } else {
+      end = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+    }
+    document.getElementById('period-end').value = end.toISOString().split('T')[0];
+  }
+
+  function closePeriod(id, label) {
+    document.getElementById('close-period-label').textContent = label;
+    document.getElementById('confirm-close-btn').onclick = () => {
+      const f = document.createElement('form');
+      f.method = 'post'; f.action = `/payroll/periods/${id}/close/`;
+      f.innerHTML = '{% csrf_token %}';
+      document.body.appendChild(f); f.submit();
+    };
+    openModal('close-period-modal');
+  }
+</script>
+{% endblock %}

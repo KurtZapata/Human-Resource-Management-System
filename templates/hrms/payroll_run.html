@@ -1,0 +1,304 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Run Payroll{% endblock %}
+{% block page_title %}Run Payroll{% endblock %}
+{% block breadcrumb %}Payroll › Run Payroll{% endblock %}
+
+{% block extra_css %}
+<style>
+  .run-layout { display: grid; grid-template-columns: 1fr 340px; gap: 1.25rem; align-items: start; }
+  @media (max-width: 960px) { .run-layout { grid-template-columns: 1fr; } }
+
+  /* Period selector cards */
+  .period-options { display: flex; flex-direction: column; gap: .65rem; }
+  .period-option {
+    display: flex; align-items: center; gap: .85rem;
+    padding: 1rem 1.15rem; border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius-md); cursor: pointer; transition: all .2s;
+    background: var(--white);
+  }
+  .period-option:hover   { border-color: var(--blue-500); background: var(--blue-50); }
+  .period-option.selected{ border-color: var(--blue-700); background: var(--blue-50); box-shadow: 0 0 0 3px rgba(26,76,158,.1); }
+  .period-option input[type="radio"] { accent-color: var(--blue-700); flex-shrink: 0; width: 18px; height: 18px; }
+  .period-option-info h4 { font-size: .9rem; font-weight: 800; color: var(--gray-800); }
+  .period-option-info p  { font-size: .78rem; color: var(--gray-400); margin-top: .1rem; }
+  .period-option-meta    { margin-left: auto; text-align: right; }
+  .period-option-meta .days { font-size: 1rem; font-weight: 800; color: var(--blue-800); }
+  .period-option-meta .dlabel { font-size: .68rem; color: var(--gray-400); }
+
+  /* Checklist */
+  .pre-run-checklist { display: flex; flex-direction: column; gap: .5rem; }
+  .check-item {
+    display: flex; align-items: center; gap: .75rem; padding: .65rem .85rem;
+    border-radius: var(--radius-sm); font-size: .85rem;
+  }
+  .check-item.pass { background: #DCFCE7; color: #15803D; }
+  .check-item.warn { background: #FEF3C7; color: #B45309; }
+  .check-item.fail { background: #FEE2E2; color: #B91C1C; }
+  .check-icon { font-size: 1rem; flex-shrink: 0; }
+
+  /* Employee preview table */
+  .emp-preview-row td { font-size: .82rem; }
+
+  /* Run button */
+  .run-btn {
+    width: 100%; padding: 1rem; font-size: 1rem; font-weight: 800;
+    background: var(--blue-800); color: var(--white); border: none;
+    border-radius: var(--radius-md); cursor: pointer; transition: all .2s;
+    display: flex; align-items: center; justify-content: center; gap: .65rem;
+    font-family: var(--font-display);
+  }
+  .run-btn:hover:not(:disabled) { background: var(--blue-700); transform: translateY(-1px); box-shadow: var(--shadow-lg); }
+  .run-btn:disabled { background: var(--gray-300); cursor: not-allowed; }
+
+  /* Progress overlay */
+  .run-progress {
+    display: none; text-align: center; padding: 2rem;
+  }
+  .run-progress.active { display: block; }
+  .spinner {
+    width: 48px; height: 48px; border: 4px solid var(--blue-100);
+    border-top-color: var(--blue-700); border-radius: 50%;
+    animation: spin 1s linear infinite; margin: 0 auto 1rem;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="run-layout">
+
+  <!-- ── LEFT: Period selection + employee preview ── -->
+  <div>
+
+    <!-- Period Picker -->
+    <div class="card" style="margin-bottom:1.25rem;">
+      <div class="card-header"><h3>1. Select Payroll Period</h3></div>
+      <div class="card-body">
+        {% if periods %}
+        <div class="period-options">
+          {% for period in periods %}
+          <label class="period-option {% if forloop.first %}selected{% endif %}"
+                 onclick="selectPeriod(this, {{ period.id }}, {{ period.working_days }})">
+            <input type="radio" name="period_choice" value="{{ period.id }}"
+                   {% if forloop.first %}checked{% endif %}>
+            <div class="period-option-info">
+              <h4>{{ period.start_date|date:"M d" }} – {{ period.end_date|date:"M d, Y" }}</h4>
+              <p>Created {{ period.created_at|date:"M d, Y" }}</p>
+            </div>
+            <div class="period-option-meta">
+              <div class="days">{{ period.working_days }}</div>
+              <div class="dlabel">work days</div>
+            </div>
+            <span class="badge badge-blue">{{ period.status|title }}</span>
+          </label>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div style="text-align:center;padding:2rem;color:var(--gray-400);">
+          <div style="font-size:2rem;margin-bottom:.5rem;">📅</div>
+          No open payroll periods.
+          <a href="{% url 'payroll:periods' %}" class="btn btn-primary btn-sm" style="display:block;margin-top:.75rem;">Create Period</a>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Employee Preview -->
+    <div class="card">
+      <div class="card-header">
+        <h3>2. Employees to be Processed</h3>
+        <span class="badge badge-blue">{{ active_employees }} active employees</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Employee</th>
+              <th>Department</th>
+              <th>Salary Grade</th>
+              <th style="text-align:right;">Base Salary</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for emp in employees %}
+            <tr class="emp-preview-row">
+              <td>
+                <strong>{{ emp.last_name }}, {{ emp.first_name }}</strong>
+                <div style="font-size:.72rem;color:var(--gray-400);">{{ emp.employee_code }}</div>
+              </td>
+              <td>{{ emp.department.name|default:"—" }}</td>
+              <td>{{ emp.salary_grade.name|default:"No grade ⚠" }}</td>
+              <td style="text-align:right;font-weight:600;">
+                {% if emp.salary_grade %}
+                  ₱{{ emp.salary_grade.base_salary|floatformat:"2" }}
+                {% else %}
+                  <span style="color:var(--warning);">Not set</span>
+                {% endif %}
+              </td>
+              <td>
+                <span class="badge badge-success">Active</span>
+              </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" style="text-align:center;padding:2rem;color:var(--gray-400);">No active employees found.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── RIGHT: Checklist + Run button ── -->
+  <div>
+
+    <!-- Pre-run Checklist -->
+    <div class="card" style="margin-bottom:1.25rem;">
+      <div class="card-header"><h3>Pre-run Checklist</h3></div>
+      <div class="card-body">
+        <div class="pre-run-checklist">
+          <div class="check-item {% if checks.has_open_period %}pass{% else %}fail{% endif %}">
+            <span class="check-icon">{% if checks.has_open_period %}✅{% else %}❌{% endif %}</span>
+            Open payroll period selected
+          </div>
+          <div class="check-item {% if checks.has_employees %}pass{% else %}fail{% endif %}">
+            <span class="check-icon">{% if checks.has_employees %}✅{% else %}❌{% endif %}</span>
+            {{ active_employees }} active employee{{ active_employees|pluralize }} found
+          </div>
+          <div class="check-item {% if checks.all_have_grades %}pass{% elif checks.some_missing_grades %}warn{% else %}fail{% endif %}">
+            <span class="check-icon">{% if checks.all_have_grades %}✅{% elif checks.some_missing_grades %}⚠{% else %}❌{% endif %}</span>
+            Salary grades assigned
+            {% if checks.missing_grade_count %}
+              <span style="font-size:.75rem;margin-left:auto;">{{ checks.missing_grade_count }} missing</span>
+            {% endif %}
+          </div>
+          <div class="check-item {% if checks.has_components %}pass{% else %}warn{% endif %}">
+            <span class="check-icon">{% if checks.has_components %}✅{% else %}⚠{% endif %}</span>
+            Payroll components configured
+          </div>
+          <div class="check-item {% if checks.attendance_imported %}pass{% else %}warn{% endif %}">
+            <span class="check-icon">{% if checks.attendance_imported %}✅{% else %}⚠{% endif %}</span>
+            Attendance data available
+          </div>
+          <div class="check-item {% if not checks.already_run %}pass{% else %}warn{% endif %}">
+            <span class="check-icon">{% if not checks.already_run %}✅{% else %}⚠{% endif %}</span>
+            {% if checks.already_run %}Period already has payroll (will overwrite draft){% else %}Period not yet processed{% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Summary box -->
+    <div class="card" style="margin-bottom:1.25rem;">
+      <div class="card-header"><h3>Run Summary</h3></div>
+      <div class="card-body">
+        <div style="display:flex;flex-direction:column;gap:.5rem;font-size:.85rem;">
+          <div style="display:flex;justify-content:space-between;">
+            <span class="text-gray">Employees</span>
+            <strong>{{ active_employees }}</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;">
+            <span class="text-gray">Active Components</span>
+            <strong>{{ component_count }}</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;">
+            <span class="text-gray">Estimated Total Gross</span>
+            <strong style="color:var(--success);">₱{{ estimated_gross|floatformat:"2" }}</strong>
+          </div>
+          <div style="display:flex;justify-content:space-between;">
+            <span class="text-gray">Estimated Total Net</span>
+            <strong style="color:var(--blue-800);">₱{{ estimated_net|floatformat:"2" }}</strong>
+          </div>
+        </div>
+        <div style="background:var(--gold-100);border:1px solid #E5C000;border-radius:var(--radius-sm);padding:.65rem .85rem;font-size:.78rem;color:var(--gray-700);margin-top:.85rem;">
+          ⚠ Estimates are based on base salaries only. Actual amounts may vary with adjustments.
+        </div>
+      </div>
+    </div>
+
+    <!-- Run button -->
+    <form id="run-payroll-form" method="post" action="{% url 'payroll:run' %}" onsubmit="startRun(event)">
+      {% csrf_token %}
+      <input type="hidden" name="period_id" id="selected-period-id"
+             value="{{ periods.0.id|default:'' }}">
+
+      <div id="run-panel">
+        <button type="submit" class="run-btn" id="run-btn"
+                {% if not checks.has_open_period or not checks.has_employees %}disabled{% endif %}>
+          ▶ Run Payroll Now
+        </button>
+        <p style="font-size:.75rem;color:var(--gray-400);text-align:center;margin-top:.6rem;">
+          This will compute and create payroll records for all {{ active_employees }} active employees.
+          Existing draft records will be overwritten.
+        </p>
+      </div>
+
+      <div class="run-progress" id="run-progress">
+        <div class="spinner"></div>
+        <p style="font-weight:700;color:var(--gray-800);">Processing payroll…</p>
+        <p style="font-size:.82rem;color:var(--gray-400);margin-top:.35rem;">
+          Please do not close this page.
+        </p>
+      </div>
+    </form>
+
+  </div>
+
+</div><!-- /run-layout -->
+
+<!-- Confirm Run Modal -->
+<div class="modal-backdrop" id="confirm-run-modal">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header"><h2>Confirm Payroll Run</h2><button class="btn-close" onclick="closeModal('confirm-run-modal')">✕</button></div>
+    <div class="modal-body" style="text-align:center;padding:2rem 1.5rem;">
+      <div style="font-size:3rem;margin-bottom:.85rem;">💰</div>
+      <h3 style="font-size:1.05rem;font-weight:800;margin-bottom:.5rem;">Run payroll for <span id="confirm-period-label"></span>?</h3>
+      <p style="font-size:.88rem;color:var(--gray-600);">
+        This will process payroll for <strong>{{ active_employees }} employees</strong>.
+        Any existing draft records will be overwritten.
+      </p>
+    </div>
+    <div class="modal-footer" style="justify-content:center;gap:.75rem;">
+      <button class="btn btn-outline" onclick="closeModal('confirm-run-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="doRun()">▶ Run Payroll</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const periodLabels = {
+    {% for p in periods %}
+    {{ p.id }}: "{{ p.start_date|date:'M d' }} – {{ p.end_date|date:'M d, Y' }}",
+    {% endfor %}
+  };
+  const periodWorkingDays = {
+    {% for p in periods %}
+    {{ p.id }}: {{ p.working_days }},
+    {% endfor %}
+  };
+
+  function selectPeriod(el, id, days) {
+    document.querySelectorAll('.period-option').forEach(o => o.classList.remove('selected'));
+    el.classList.add('selected');
+    document.getElementById('selected-period-id').value = id;
+  }
+
+  function startRun(e) {
+    e.preventDefault();
+    const periodId = document.getElementById('selected-period-id').value;
+    if (!periodId) { showToast('Please select a payroll period.', 'error'); return; }
+    document.getElementById('confirm-period-label').textContent = periodLabels[periodId] || 'selected period';
+    openModal('confirm-run-modal');
+  }
+
+  function doRun() {
+    closeModal('confirm-run-modal');
+    document.getElementById('run-panel').style.display    = 'none';
+    document.getElementById('run-progress').classList.add('active');
+    document.getElementById('run-payroll-form').submit();
+  }
+</script>
+{% endblock %}

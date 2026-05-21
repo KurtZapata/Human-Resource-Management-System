@@ -1,0 +1,612 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Attendance Management{% endblock %}
+{% block page_title %}Attendance Management{% endblock %}
+{% block breadcrumb %}Attendance › Daily Dashboard{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-gold btn-sm" onclick="openModal('manual-att-modal')">+ Manual Entry</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* ── Summary Stats ── */
+  .att-stats { display: grid; grid-template-columns: repeat(5,1fr); gap: .9rem; margin-bottom: 1.5rem; }
+  @media (max-width:1100px) { .att-stats { grid-template-columns: repeat(3,1fr); } }
+  @media (max-width:700px)  { .att-stats { grid-template-columns: repeat(2,1fr); } }
+
+  /* ── Period Selector ── */
+  .period-bar {
+    display: flex; align-items: center; gap: .75rem; flex-wrap: wrap;
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-lg); padding: .85rem 1.25rem;
+    margin-bottom: 1.25rem;
+  }
+  .period-bar label { font-size: .82rem; font-weight: 700; color: var(--gray-600); white-space: nowrap; }
+
+  /* ── Employee Directory List (clickable) ── */
+  .att-emp-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: .75rem; margin-top: 1.25rem;
+  }
+  .att-emp-card {
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-md); padding: 1rem;
+    display: flex; align-items: center; gap: .75rem;
+    cursor: pointer; transition: all .2s;
+  }
+  .att-emp-card:hover { border-color: var(--blue-600); box-shadow: var(--shadow-md); transform: translateY(-2px); }
+  .emp-avatar-lg {
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--blue-800); color: var(--white);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: .9rem; flex-shrink: 0;
+  }
+  .att-emp-card h4 { font-size: .9rem; font-weight: 700; color: var(--gray-800); }
+  .att-emp-card p  { font-size: .75rem; color: var(--gray-400); }
+
+  /* ── Employee Detail View ── */
+  .att-detail-header {
+    display: flex; align-items: center; gap: 1rem;
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-lg); padding: 1.25rem 1.5rem;
+    margin-bottom: 1.25rem;
+  }
+  .att-detail-avatar {
+    width: 56px; height: 56px; border-radius: 50%;
+    background: var(--blue-800); color: var(--white);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 1.15rem; flex-shrink: 0;
+  }
+  .back-btn { color: var(--blue-700); background: none; border: none; cursor: pointer; font-family: var(--font-display); font-weight: 600; font-size: .9rem; display: flex; align-items: center; gap: .35rem; }
+
+  /* ── Calendar Grid ── */
+  .att-calendar {
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-lg); overflow: hidden;
+  }
+  .att-cal-header {
+    padding: 1rem 1.5rem;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid var(--gray-200);
+  }
+  .cal-nav { display: flex; gap: .35rem; }
+  .cal-nav button {
+    width: 32px; height: 32px; border: 1.5px solid var(--gray-300);
+    border-radius: var(--radius-sm); background: var(--white);
+    cursor: pointer; font-size: .9rem; display: flex; align-items: center; justify-content: center;
+    transition: all .15s;
+  }
+  .cal-nav button:hover { background: var(--blue-800); color: var(--white); border-color: var(--blue-800); }
+
+  .cal-grid { display: grid; grid-template-columns: repeat(7,1fr); }
+  .cal-day-header {
+    padding: .5rem; text-align: center;
+    font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--gray-500); background: var(--gray-50);
+    border-bottom: 1px solid var(--gray-200);
+  }
+  .cal-cell {
+    min-height: 70px; padding: .4rem .5rem;
+    border: 1px solid var(--gray-100);
+    cursor: pointer; transition: background .15s;
+    position: relative;
+  }
+  .cal-cell:hover { background: var(--blue-50); }
+  .cal-cell.other-month { opacity: .35; }
+  .cal-cell.today { background: var(--blue-50); }
+  .cal-cell.today .cal-day-num { color: var(--blue-800); font-weight: 800; }
+  .cal-day-num { font-size: .82rem; font-weight: 700; color: var(--gray-700); }
+  .cal-att-badge {
+    margin-top: .25rem; padding: .1rem .35rem;
+    border-radius: 4px; font-size: .68rem; font-weight: 600;
+    display: block; text-overflow: ellipsis; overflow: hidden; white-space: nowrap;
+  }
+  .cal-att-badge.present { background: #DCFCE7; color: #15803D; }
+  .cal-att-badge.late    { background: #FEF3C7; color: #B45309; }
+  .cal-att-badge.absent  { background: #FEE2E2; color: #B91C1C; }
+  .cal-att-badge.holiday { background: var(--blue-100); color: var(--blue-800); }
+  .cal-att-badge.leave   { background: #F3E8FF; color: #7E22CE; }
+
+  /* Legend */
+  .cal-legend { display:flex; gap:.75rem; flex-wrap:wrap; padding:.75rem 1.5rem; border-top:1px solid var(--gray-200); }
+  .cal-legend-item { display:flex; align-items:center; gap:.35rem; font-size:.75rem; color:var(--gray-600); }
+  .cal-legend-dot  { width:10px; height:10px; border-radius:2px; }
+
+  /* ── Attendance Detail Modal ── */
+  #att-detail-modal .modal { width: min(540px, 96vw); }
+  .att-time-grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1rem; }
+  .att-time-box {
+    background: var(--gray-50); border-radius: var(--radius-md);
+    padding: .9rem 1rem;
+  }
+  .att-time-box label { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--gray-500); display:block; margin-bottom:.35rem; }
+  .att-time-box input { background:var(--white); }
+
+  /* Leave / OT section */
+  .att-action-tabs { display:flex; gap:.4rem; margin-bottom:1rem; flex-wrap:wrap; }
+  .att-action-tab {
+    padding: .4rem .85rem; border-radius: 20px; font-size: .8rem; font-weight: 600;
+    border: 1.5px solid var(--gray-300); background: var(--white); cursor: pointer; transition: all .15s;
+  }
+  .att-action-tab.active { background: var(--blue-800); color: var(--white); border-color: var(--blue-800); }
+
+  .att-section { display: none; }
+  .att-section.active { display: block; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Dashboard vs Detail (JS toggles) ── -->
+<div id="dashboard-view">
+
+  <!-- Stats Bar -->
+  <div class="att-stats">
+    <div class="stat-card">
+      <div class="stat-icon green">✅</div>
+      <div><div class="stat-num" id="stat-present">{{ stats.present }}</div><div class="stat-label">Present</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon red">🚫</div>
+      <div><div class="stat-num" id="stat-absent">{{ stats.absent }}</div><div class="stat-label">Absent</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon gold">⏰</div>
+      <div><div class="stat-num" id="stat-late">{{ stats.late }}</div><div class="stat-label">Late</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon blue">📋</div>
+      <div><div class="stat-num" id="stat-leave">{{ stats.on_leave }}</div><div class="stat-label">On Leave</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon" style="background:#F3E8FF;color:#7E22CE;">🕐</div>
+      <div><div class="stat-num" id="stat-ot">{{ stats.overtime }}</div><div class="stat-label">Overtime</div></div>
+    </div>
+  </div>
+
+  <!-- Period selector -->
+  <div class="period-bar">
+    <label>Payroll Period:</label>
+    <select class="form-control" style="width:auto;" id="period-select" onchange="changePeriod(this.value)">
+      {% for period in payroll_periods %}
+      <option value="{{ period.id }}" {% if period == current_period %}selected{% endif %}>
+        {{ period.start_date|date:"M d" }} – {{ period.end_date|date:"M d, Y" }}
+      </option>
+      {% endfor %}
+    </select>
+    <span class="badge badge-blue" id="period-status-badge">{{ current_period.status|title }}</span>
+    <div style="margin-left:auto;display:flex;gap:.5rem;">
+      <button class="btn btn-outline btn-sm" onclick="exportAttendance()">⬇ Export</button>
+    </div>
+  </div>
+
+  <!-- Daily Attendance Table -->
+  <div class="card" style="margin-bottom:1.5rem;">
+    <div class="card-header">
+      <h3>Daily Attendance — <span id="daily-date">{{ today|date:"F d, Y" }}</span></h3>
+      <div class="search-bar" style="width:240px;">
+        <span class="search-icon">🔍</span>
+        <input type="text" placeholder="Search employee…" id="daily-search" oninput="filterDaily()">
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Employee</th>
+            <th>1st Half In</th>
+            <th>1st Half Out</th>
+            <th>2nd Half In</th>
+            <th>2nd Half Out</th>
+            <th>Hours</th>
+            <th>Late (min)</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="daily-tbody">
+          {% for record in daily_attendance %}
+          <tr>
+            <td>
+              <div class="emp-name-cell">
+                <div class="emp-avatar">{{ record.employee.first_name|slice:":1" }}{{ record.employee.last_name|slice:":1" }}</div>
+                <div>
+                  <strong>{{ record.employee.last_name }}, {{ record.employee.first_name }}</strong>
+                  <span style="font-size:.75rem;color:var(--gray-400);">{{ record.employee.employee_code }}</span>
+                </div>
+              </div>
+            </td>
+            <td>{{ record.time_in_am|default:"—" }}</td>
+            <td>{{ record.time_out_am|default:"—" }}</td>
+            <td>{{ record.time_in_pm|default:"—" }}</td>
+            <td>{{ record.time_out_pm|default:"—" }}</td>
+            <td>{{ record.total_hours|default:"—" }}</td>
+            <td>{{ record.late_minutes|default:"0" }}</td>
+            <td>
+              <span class="badge {% if record.status == 'present' %}badge-success{% elif record.status == 'late' %}badge-warning{% else %}badge-danger{% endif %}">
+                {{ record.status|title }}
+              </span>
+            </td>
+            <td>
+              <button class="btn btn-outline btn-sm" onclick="openAttDetail({{ record.id }})">✏ Edit</button>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="9" style="text-align:center;padding:2rem;color:var(--gray-400);">No attendance data for today.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Employee grid — click to see individual attendance -->
+  <div class="card">
+    <div class="card-header">
+      <h3>Employee Attendance Summary</h3>
+      <span class="text-sm text-gray">Click an employee to view their full attendance</span>
+    </div>
+    <div class="card-body">
+      <div class="att-emp-grid">
+        {% for emp in employees %}
+        <div class="att-emp-card" onclick="showEmployeeDetail({{ emp.id }}, '{{ emp.first_name }} {{ emp.last_name }}', '{{ emp.employee_code }}')">
+          <div class="emp-avatar-lg">{{ emp.first_name|slice:":1" }}{{ emp.last_name|slice:":1" }}</div>
+          <div>
+            <h4>{{ emp.last_name }}, {{ emp.first_name }}</h4>
+            <p>{{ emp.employee_code }}</p>
+            <p>{{ emp.department.name|default:"—" }}</p>
+          </div>
+          <div style="margin-left:auto;">
+            <span class="badge {% if emp.today_status == 'present' %}badge-success{% elif emp.today_status == 'late' %}badge-warning{% elif emp.today_status == 'on_leave' %}badge-info{% else %}badge-danger{% endif %}">
+              {{ emp.today_status|title|default:"Absent" }}
+            </span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+</div><!-- /#dashboard-view -->
+
+<!-- ══ EMPLOYEE DETAIL VIEW ══ -->
+<div id="detail-view" style="display:none;">
+
+  <div class="att-detail-header">
+    <button class="back-btn" onclick="backToDashboard()">← Back to Dashboard</button>
+    <div class="att-detail-avatar" id="detail-avatar">—</div>
+    <div>
+      <h2 id="detail-name" style="font-size:1.15rem;font-weight:800;"></h2>
+      <p id="detail-code" style="font-size:.82rem;color:var(--gray-500);"></p>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:.75rem;align-items:center;">
+      <label style="font-size:.82rem;font-weight:600;color:var(--gray-600);">Period:</label>
+      <select class="form-control" id="detail-period-select" style="width:auto;">
+        {% for period in payroll_periods %}
+        <option value="{{ period.id }}">{{ period.start_date|date:"M d" }} – {{ period.end_date|date:"M d, Y" }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <!-- Period Stats -->
+  <div class="att-stats" id="detail-stats" style="margin-bottom:1.25rem;">
+    <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-num" id="ds-present">—</div><div class="stat-label">Present Days</div></div></div>
+    <div class="stat-card"><div class="stat-icon red">🚫</div><div><div class="stat-num" id="ds-absent">—</div><div class="stat-label">Absent Days</div></div></div>
+    <div class="stat-card"><div class="stat-icon gold">⏰</div><div><div class="stat-num" id="ds-late">—</div><div class="stat-label">Late Days</div></div></div>
+    <div class="stat-card"><div class="stat-icon blue">📋</div><div><div class="stat-num" id="ds-leave">—</div><div class="stat-label">Leave Days</div></div></div>
+    <div class="stat-card"><div class="stat-icon" style="background:#F3E8FF;color:#7E22CE;">🕐</div><div><div class="stat-num" id="ds-ot">—</div><div class="stat-label">OT Hours</div></div></div>
+  </div>
+
+  <!-- Calendar -->
+  <div class="att-calendar">
+    <div class="att-cal-header">
+      <h3 id="cal-month-label" style="font-size:1rem;font-weight:700;"></h3>
+      <div class="cal-nav">
+        <button onclick="calNav(-1)">‹</button>
+        <button onclick="calNav(1)">›</button>
+      </div>
+    </div>
+    <div class="cal-grid" id="cal-grid">
+      <!-- Populated by JS -->
+    </div>
+    <div class="cal-legend">
+      <div class="cal-legend-item"><div class="cal-legend-dot" style="background:#DCFCE7;"></div>Present</div>
+      <div class="cal-legend-item"><div class="cal-legend-dot" style="background:#FEF3C7;"></div>Late</div>
+      <div class="cal-legend-item"><div class="cal-legend-dot" style="background:#FEE2E2;"></div>Absent</div>
+      <div class="cal-legend-item"><div class="cal-legend-dot" style="background:var(--blue-100);"></div>Holiday</div>
+      <div class="cal-legend-item"><div class="cal-legend-dot" style="background:#F3E8FF;"></div>Leave</div>
+    </div>
+  </div>
+
+</div><!-- /#detail-view -->
+
+<!-- ══ ATTENDANCE EDIT MODAL ══ -->
+<div class="modal-backdrop" id="att-detail-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Edit Attendance Record</h2>
+      <button class="btn-close" onclick="closeModal('att-detail-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="att-edit-form" method="post" action="{% url 'attendance:update' pk=0 %}">
+        {% csrf_token %}
+        <input type="hidden" id="att-record-id" name="attendance_id">
+
+        <div style="display:flex;gap:.5rem;margin-bottom:1rem;align-items:center;">
+          <span class="form-label">Date:</span>
+          <strong id="att-edit-date"></strong>
+        </div>
+
+        <!-- Time inputs -->
+        <div class="att-time-grid">
+          <div class="att-time-box">
+            <label>1st Half Time In</label>
+            <input type="time" name="time_in_am" id="edit-time-in-am" class="form-control">
+          </div>
+          <div class="att-time-box">
+            <label>1st Half Time Out</label>
+            <input type="time" name="time_out_am" id="edit-time-out-am" class="form-control">
+          </div>
+          <div class="att-time-box">
+            <label>2nd Half Time In</label>
+            <input type="time" name="time_in_pm" id="edit-time-in-pm" class="form-control">
+          </div>
+          <div class="att-time-box">
+            <label>2nd Half Time Out</label>
+            <input type="time" name="time_out_pm" id="edit-time-out-pm" class="form-control">
+          </div>
+        </div>
+
+        <!-- Action Tabs -->
+        <div class="att-action-tabs">
+          <button type="button" class="att-action-tab active" onclick="switchAttSection('sec-status', this)">Status</button>
+          <button type="button" class="att-action-tab" onclick="switchAttSection('sec-overtime', this)">Overtime</button>
+          <button type="button" class="att-action-tab" onclick="switchAttSection('sec-leave', this)">Leave</button>
+        </div>
+
+        <!-- Status Section -->
+        <div class="att-section active" id="sec-status">
+          <div class="form-group">
+            <label class="form-label">Attendance Status</label>
+            <select name="status" id="edit-status" class="form-control">
+              <option value="present">Present</option>
+              <option value="late">Late</option>
+              <option value="absent">Absent</option>
+            </select>
+          </div>
+          <div class="form-group mt-2">
+            <label class="form-label">Admin Notes</label>
+            <textarea name="notes" class="form-control" rows="2" placeholder="Optional notes…"></textarea>
+          </div>
+        </div>
+
+        <!-- Overtime Section -->
+        <div class="att-section" id="sec-overtime">
+          <div class="form-group">
+            <label class="form-label">Overtime Hours</label>
+            <input type="number" name="overtime_hours" class="form-control" step="0.5" min="0" placeholder="e.g. 2.5">
+          </div>
+          <div class="form-group mt-2">
+            <label class="form-label">OT Approval Status</label>
+            <select name="ot_approved" class="form-control">
+              <option value="">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+            </select>
+          </div>
+          <div class="form-group mt-2">
+            <label class="form-label">OT Description / Reason</label>
+            <textarea name="ot_description" class="form-control" rows="2" placeholder="Reason for overtime…"></textarea>
+          </div>
+        </div>
+
+        <!-- Leave Section -->
+        <div class="att-section" id="sec-leave">
+          <div class="form-group">
+            <label class="form-label">Leave Type</label>
+            <select name="leave_type_id" class="form-control">
+              <option value="">No Leave</option>
+              {% for lt in leave_types %}
+              <option value="{{ lt.id }}">{{ lt.name }} ({% if lt.is_paid %}Paid{% else %}Unpaid{% endif %})</option>
+              {% endfor %}
+              <!-- NOTE: Leave types are fetched from the LeaveType model.
+                   New leave types added in Settings will automatically appear here. -->
+            </select>
+          </div>
+          <div class="form-group mt-2">
+            <label class="form-label">Leave Status</label>
+            <select name="leave_status" class="form-control">
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
+            </select>
+          </div>
+        </div>
+
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('att-detail-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveAttendance()">💾 Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- Manual Entry Modal -->
+<div class="modal-backdrop" id="manual-att-modal">
+  <div class="modal">
+    <div class="modal-header"><h2>Manual Attendance Entry</h2><button class="btn-close" onclick="closeModal('manual-att-modal')">✕</button></div>
+    <div class="modal-body">
+      <form id="manual-att-form" method="post" action="{% url 'attendance:manual_entry' %}">
+        {% csrf_token %}
+        <div class="modal-form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">Employee</label>
+            <select name="employee_id" class="form-control" required>
+              <option value="">Select employee…</option>
+              {% for emp in employees %}
+              <option value="{{ emp.id }}">{{ emp.last_name }}, {{ emp.first_name }} ({{ emp.employee_code }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">Date</label>
+            <input type="date" name="date" class="form-control" required>
+          </div>
+          <div class="form-group"><label class="form-label">1st Half In</label><input type="time" name="time_in_am" class="form-control"></div>
+          <div class="form-group"><label class="form-label">1st Half Out</label><input type="time" name="time_out_am" class="form-control"></div>
+          <div class="form-group"><label class="form-label">2nd Half In</label><input type="time" name="time_in_pm" class="form-control"></div>
+          <div class="form-group"><label class="form-label">2nd Half Out</label><input type="time" name="time_out_pm" class="form-control"></div>
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-control">
+              <option value="present">Present</option>
+              <option value="late">Late</option>
+              <option value="absent">Absent</option>
+            </select>
+          </div>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('manual-att-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="document.getElementById('manual-att-form').submit()">💾 Save Entry</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── Section toggle (Status / OT / Leave) ──────────────────
+  function switchAttSection(id, btn) {
+    document.querySelectorAll('.att-section').forEach(s => s.classList.remove('active'));
+    document.querySelectorAll('.att-action-tab').forEach(b => b.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    btn.classList.add('active');
+  }
+
+  // ── Daily search filter ────────────────────────────────────
+  function filterDaily() {
+    const q = document.getElementById('daily-search').value.toLowerCase();
+    document.querySelectorAll('#daily-tbody tr').forEach(r => {
+      r.style.display = r.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  }
+
+  // ── Employee detail view ───────────────────────────────────
+  let currentEmpId = null;
+  let calYear, calMonth;
+
+  function showEmployeeDetail(id, name, code) {
+    currentEmpId = id;
+    document.getElementById('dashboard-view').style.display = 'none';
+    document.getElementById('detail-view').style.display = '';
+    document.getElementById('detail-name').textContent = name;
+    document.getElementById('detail-code').textContent = code;
+    const initials = name.split(' ').map(n=>n[0]).join('').slice(0,2).toUpperCase();
+    document.getElementById('detail-avatar').textContent = initials;
+
+    const now = new Date();
+    calYear  = now.getFullYear();
+    calMonth = now.getMonth();
+    renderCalendar(id, calYear, calMonth);
+    loadDetailStats(id);
+  }
+
+  function backToDashboard() {
+    document.getElementById('dashboard-view').style.display = '';
+    document.getElementById('detail-view').style.display = 'none';
+    currentEmpId = null;
+  }
+
+  function calNav(dir) {
+    calMonth += dir;
+    if (calMonth > 11) { calMonth = 0; calYear++; }
+    if (calMonth < 0)  { calMonth = 11; calYear--; }
+    renderCalendar(currentEmpId, calYear, calMonth);
+  }
+
+  // ── Calendar renderer ──────────────────────────────────────
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const dayNames   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+  function renderCalendar(empId, year, month) {
+    document.getElementById('cal-month-label').textContent = `${monthNames[month]} ${year}`;
+    const grid = document.getElementById('cal-grid');
+    grid.innerHTML = '';
+    // Headers
+    dayNames.forEach(d => {
+      const h = document.createElement('div');
+      h.className = 'cal-day-header'; h.textContent = d; grid.appendChild(h);
+    });
+    const firstDay = new Date(year, month, 1).getDay();
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const today = new Date();
+
+    // Empty cells before month starts
+    for (let i = 0; i < firstDay; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'cal-cell other-month'; grid.appendChild(cell);
+    }
+    // Day cells
+    for (let d = 1; d <= daysInMonth; d++) {
+      const cell = document.createElement('div');
+      cell.className = 'cal-cell';
+      const isToday = (today.getFullYear()===year && today.getMonth()===month && today.getDate()===d);
+      if (isToday) cell.classList.add('today');
+
+      const num = document.createElement('div');
+      num.className = 'cal-day-num'; num.textContent = d; cell.appendChild(num);
+
+      // Attach click for editing (Django will provide att_data via JSON script)
+      const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      cell.onclick = () => openAttDetailByDate(empId, dateStr);
+
+      // Render attendance badge if data available
+      if (window.attData && window.attData[dateStr]) {
+        const rec = window.attData[dateStr];
+        const badge = document.createElement('span');
+        badge.className = `cal-att-badge ${rec.status}`;
+        badge.textContent = rec.status.charAt(0).toUpperCase() + rec.status.slice(1);
+        cell.appendChild(badge);
+      }
+      grid.appendChild(cell);
+    }
+  }
+
+  function openAttDetail(recordId) {
+    document.getElementById('att-record-id').value = recordId;
+    openModal('att-detail-modal');
+  }
+
+  function openAttDetailByDate(empId, dateStr) {
+    document.getElementById('att-edit-date').textContent = dateStr;
+    // In production: fetch record data by empId + dateStr and pre-populate
+    openModal('att-detail-modal');
+  }
+
+  function saveAttendance() {
+    document.getElementById('att-edit-form').submit();
+  }
+
+  async function loadDetailStats(empId) {
+    try {
+      const res = await fetch(`{% url 'attendance:employee_stats' %}?emp_id=${empId}&period_id=${document.getElementById('detail-period-select').value}`);
+      const data = await res.json();
+      document.getElementById('ds-present').textContent = data.present ?? '—';
+      document.getElementById('ds-absent').textContent  = data.absent  ?? '—';
+      document.getElementById('ds-late').textContent    = data.late    ?? '—';
+      document.getElementById('ds-leave').textContent   = data.leave   ?? '—';
+      document.getElementById('ds-ot').textContent      = data.ot_hours ?? '—';
+      window.attData = data.records || {};
+      renderCalendar(empId, calYear, calMonth);
+    } catch {}
+  }
+
+  function exportAttendance() {
+    const period = document.getElementById('period-select').value;
+    window.location.href = `{% url 'attendance:export' %}?period_id=${period}`;
+  }
+</script>
+{% endblock %}

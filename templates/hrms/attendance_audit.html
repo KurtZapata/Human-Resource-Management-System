@@ -1,0 +1,182 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Attendance Audit Log{% endblock %}
+{% block page_title %}Attendance Audit Log{% endblock %}
+{% block breadcrumb %}Attendance › Audit Log{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-outline btn-sm" style="color:var(--white);border-color:rgba(255,255,255,.4);"
+          onclick="exportAudit()">⬇ Export CSV</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .filter-bar {
+    background:var(--white); border:1px solid var(--gray-200);
+    border-radius:var(--radius-lg); padding:.9rem 1.25rem;
+    display:flex; flex-wrap:wrap; gap:.75rem; align-items:flex-end;
+    margin-bottom:1.25rem;
+  }
+  .filter-bar .form-group { flex:1; min-width:130px; }
+  .filter-bar .form-group label { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--gray-500); display:block; margin-bottom:.3rem; }
+
+  .action-badge {
+    display:inline-flex; align-items:center; gap:.3rem;
+    padding:.2rem .55rem; border-radius:4px; font-size:.75rem; font-weight:700;
+  }
+  .action-badge.time_in        { background:#DCFCE7; color:#15803D; }
+  .action-badge.time_out       { background:#DBEAFE; color:#1E40AF; }
+  .action-badge.time_in_failed  { background:#FEE2E2; color:#B91C1C; }
+  .action-badge.time_out_failed { background:#FEE2E2; color:#B91C1C; }
+  .action-badge.default        { background:var(--gray-100); color:var(--gray-600); }
+
+  .ip-cell { font-family:monospace; font-size:.78rem; color:var(--gray-500); }
+  .device-cell { font-size:.75rem; color:var(--gray-400); max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* Security alert row */
+  tr.failed-row { background:#FFF5F5; }
+  tr.failed-row:hover { background:#FEE2E2; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Filters ── -->
+<div class="filter-bar">
+  <form method="get" action="{% url 'attendance:audit_log' %}" style="display:contents;">
+    <div class="form-group" style="flex:2;min-width:180px;">
+      <label>Employee</label>
+      <select name="emp_id" class="form-control">
+        <option value="">All Employees</option>
+        {% for emp in employees %}
+        <option value="{{ emp.id }}" {% if request.GET.emp_id == emp.id|stringformat:'s' %}selected{% endif %}>
+          {{ emp.last_name }}, {{ emp.first_name }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Action</label>
+      <select name="action" class="form-control">
+        <option value="">All Actions</option>
+        <option value="time_in"   {% if request.GET.action == 'time_in' %}selected{% endif %}>Time In</option>
+        <option value="time_out"  {% if request.GET.action == 'time_out' %}selected{% endif %}>Time Out</option>
+        <option value="time_in_FAILED" {% if request.GET.action == 'time_in_FAILED' %}selected{% endif %}>Failed Attempt</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>From</label>
+      <input type="date" name="from" class="form-control" value="{{ request.GET.from }}">
+    </div>
+    <div class="form-group">
+      <label>To</label>
+      <input type="date" name="to" class="form-control" value="{{ request.GET.to }}">
+    </div>
+    <div style="display:flex;gap:.4rem;align-items:flex-end;">
+      <button type="submit" class="btn btn-primary btn-sm">🔍 Filter</button>
+      <a href="{% url 'attendance:audit_log' %}" class="btn btn-outline btn-sm">Clear</a>
+    </div>
+  </form>
+</div>
+
+<!-- Counts -->
+<div style="display:flex;gap:.75rem;flex-wrap:wrap;margin-bottom:1.25rem;">
+  <div class="stat-card" style="flex:1;min-width:140px;">
+    <div class="stat-icon green">⏱</div>
+    <div><div class="stat-num">{{ summary.time_in }}</div><div class="stat-label">Time-In Events</div></div>
+  </div>
+  <div class="stat-card" style="flex:1;min-width:140px;">
+    <div class="stat-icon blue">⏹</div>
+    <div><div class="stat-num">{{ summary.time_out }}</div><div class="stat-label">Time-Out Events</div></div>
+  </div>
+  <div class="stat-card" style="flex:1;min-width:140px;">
+    <div class="stat-icon red">⚠</div>
+    <div><div class="stat-num">{{ summary.failed }}</div><div class="stat-label">Failed Attempts</div></div>
+  </div>
+  <div class="stat-card" style="flex:1;min-width:140px;">
+    <div class="stat-icon gold">📋</div>
+    <div><div class="stat-num">{{ logs.paginator.count }}</div><div class="stat-label">Total Entries</div></div>
+  </div>
+</div>
+
+<!-- ── Log Table ── -->
+<div class="card">
+  <div class="card-header">
+    <h3>Attendance Log Entries</h3>
+    <span class="text-sm text-gray">Sorted newest first</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Timestamp</th>
+          <th>Employee</th>
+          <th>Action</th>
+          <th>IP Address</th>
+          <th>Device / Browser</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in logs %}
+        <tr {% if 'FAILED' in log.action %}class="failed-row"{% endif %}>
+          <td style="color:var(--gray-400);font-size:.78rem;">{{ forloop.counter|add:logs.start_index|add:"-1" }}</td>
+          <td>
+            <strong style="font-size:.85rem;">{{ log.timestamp|date:"M d, Y" }}</strong>
+            <div style="font-size:.75rem;color:var(--gray-400);">{{ log.timestamp|time:"H:i:s" }}</div>
+          </td>
+          <td>
+            {% if log.employee %}
+              <strong>{{ log.employee.last_name }}, {{ log.employee.first_name }}</strong>
+              <div style="font-size:.72rem;color:var(--gray-400);">{{ log.employee.employee_code }}</div>
+            {% else %}
+              <span class="text-gray">Unknown / Failed</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="action-badge {% if log.action == 'time_in' %}time_in{% elif log.action == 'time_out' %}time_out{% elif 'FAILED' in log.action %}time_in_failed{% else %}default{% endif %}">
+              {% if log.action == 'time_in' %}⏱ Time In
+              {% elif log.action == 'time_out' %}⏹ Time Out
+              {% elif 'FAILED' in log.action %}⚠ Failed
+              {% else %}{{ log.action }}{% endif %}
+            </span>
+          </td>
+          <td class="ip-cell">{{ log.ip_address|default:"—" }}</td>
+          <td class="device-cell" title="{{ log.device_info }}">{{ log.device_info|truncatechars:60|default:"—" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" style="text-align:center;padding:3rem;color:var(--gray-400);">No audit log entries found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  <div style="padding:1rem 1.5rem;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--gray-200);">
+    <span class="text-sm text-gray">Page {{ logs.number }} of {{ logs.paginator.num_pages }}</span>
+    <div class="pagination">
+      {% if logs.has_previous %}
+        <a href="?page={{ logs.previous_page_number }}" class="page-btn">‹</a>
+      {% endif %}
+      {% for num in logs.paginator.page_range %}
+        {% if logs.number == num %}
+          <span class="page-btn active">{{ num }}</span>
+        {% elif num >= logs.number|add:"-2" and num <= logs.number|add:"2" %}
+          <a href="?page={{ num }}" class="page-btn">{{ num }}</a>
+        {% endif %}
+      {% endfor %}
+      {% if logs.has_next %}
+        <a href="?page={{ logs.next_page_number }}" class="page-btn">›</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+  function exportAudit() {
+    const params = new URLSearchParams(window.location.search);
+    window.location.href = "{% url 'attendance:export' %}?" + params.toString() + '&type=audit';
+  }
+</script>
+{% endblock %}

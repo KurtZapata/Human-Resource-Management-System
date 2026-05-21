@@ -1,0 +1,595 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Employee Management{% endblock %}
+{% block page_title %}Employee Management{% endblock %}
+{% block breadcrumb %}HR Management › Employees{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-gold btn-sm" onclick="openModal('add-employee-modal')">+ Add Employee</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .emp-stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 1rem; margin-bottom: 1.5rem; }
+  @media (max-width:900px) { .emp-stats { grid-template-columns: repeat(2,1fr); } }
+
+  .filters-bar {
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-lg); padding: 1rem 1.25rem;
+    display: flex; flex-wrap: wrap; gap: .75rem; align-items: center;
+    margin-bottom: 1.25rem;
+  }
+  .filters-bar .search-bar { flex: 1; min-width: 220px; }
+
+  .emp-avatar {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--blue-800); color: var(--white);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: .8rem; font-weight: 700; flex-shrink: 0;
+  }
+  .emp-name-cell { display: flex; align-items: center; gap: .7rem; }
+  .emp-name-cell strong { display: block; }
+  .emp-name-cell span   { font-size: .76rem; color: var(--gray-400); }
+
+  .action-btns { display: flex; gap: .4rem; }
+
+  /* ── Add Employee Modal ── */
+  #add-employee-modal .modal { width: min(720px, 96vw); }
+  .modal-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+  .modal-form-grid .full { grid-column: 1 / -1; }
+  .modal-section-label {
+    font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--blue-800); background: var(--blue-50);
+    padding: .4rem .75rem; border-radius: var(--radius-sm);
+    margin-bottom: .75rem; display: block;
+  }
+
+  .tab-bar { display:flex; gap:.25rem; border-bottom: 2px solid var(--gray-200); margin-bottom: 1.5rem; }
+  .tab-btn {
+    padding: .55rem 1.1rem; background: none; border: none;
+    font-family: var(--font-display); font-size: .88rem; font-weight: 600;
+    color: var(--gray-500); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px;
+    transition: all .15s;
+  }
+  .tab-btn.active { color: var(--blue-800); border-bottom-color: var(--blue-800); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* Confirm delete */
+  #delete-confirm-modal .modal { max-width: 380px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- ── Stats ── -->
+<div class="emp-stats">
+  <div class="stat-card">
+    <div class="stat-icon blue">👥</div>
+    <div><div class="stat-num">{{ stats.total }}</div><div class="stat-label">Total Employees</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon green">✅</div>
+    <div><div class="stat-num">{{ stats.active }}</div><div class="stat-label">Active</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon red">🚫</div>
+    <div><div class="stat-num">{{ stats.inactive }}</div><div class="stat-label">Inactive</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon gold">📋</div>
+    <div><div class="stat-num">{{ stats.contract }}</div><div class="stat-label">Contractual</div></div>
+  </div>
+</div>
+
+<!-- ── Filters ── -->
+<div class="filters-bar">
+  <div class="search-bar" style="flex:1;min-width:220px;">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="emp-search" placeholder="Search by name, code, email…" oninput="filterEmployees()">
+  </div>
+  <select class="form-control" id="filter-dept" style="width:auto;" onchange="filterEmployees()">
+    <option value="">All Departments</option>
+    {% for dept in departments %}
+    <option value="{{ dept.id }}">{{ dept.name }}</option>
+    {% endfor %}
+  </select>
+  <select class="form-control" id="filter-status" style="width:auto;" onchange="filterEmployees()">
+    <option value="">All Status</option>
+    <option value="active">Active</option>
+    <option value="inactive">Inactive</option>
+  </select>
+  <select class="form-control" id="filter-type" style="width:auto;" onchange="filterEmployees()">
+    <option value="">All Types</option>
+    <option value="regular">Regular</option>
+    <option value="contract">Contract</option>
+  </select>
+  <button class="btn btn-outline btn-sm" onclick="exportEmployees()">⬇ Export</button>
+</div>
+
+<!-- ── Table ── -->
+<div class="card">
+  <div class="card-header">
+    <h3>Employee Directory</h3>
+    <span class="text-sm text-gray" id="emp-count">Showing {{ employees.count }} employees</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table" id="emp-table">
+      <thead>
+        <tr>
+          <th>Employee</th>
+          <th>Code</th>
+          <th>Department</th>
+          <th>Position</th>
+          <th>Type</th>
+          <th>Date Hired</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="emp-tbody">
+        {% for emp in employees %}
+        <tr data-dept="{{ emp.department_id }}" data-status="{{ emp.status }}" data-type="{{ emp.employment_type }}">
+          <td>
+            <div class="emp-name-cell">
+              <div class="emp-avatar">{{ emp.first_name|slice:":1" }}{{ emp.last_name|slice:":1" }}</div>
+              <div>
+                <strong>{{ emp.last_name }}, {{ emp.first_name }}</strong>
+                <span>{{ emp.email }}</span>
+              </div>
+            </div>
+          </td>
+          <td><code style="font-size:.82rem;background:var(--gray-100);padding:.15rem .4rem;border-radius:4px;">{{ emp.employee_code }}</code></td>
+          <td>{{ emp.department.name|default:"—" }}</td>
+          <td>{{ emp.position.name|default:"—" }}</td>
+          <td>
+            <span class="badge {% if emp.employment_type == 'regular' %}badge-blue{% else %}badge-gold{% endif %}">
+              {{ emp.employment_type|title }}
+            </span>
+          </td>
+          <td>{{ emp.date_hired|date:"M d, Y" }}</td>
+          <td>
+            <span class="badge {% if emp.status == 'active' %}badge-success{% else %}badge-danger{% endif %}">
+              {{ emp.status|title }}
+            </span>
+          </td>
+          <td>
+            <div class="action-btns">
+              <button class="btn btn-outline btn-sm btn-icon" title="View" onclick="viewEmployee({{ emp.id }})">👁</button>
+              <button class="btn btn-primary btn-sm btn-icon" title="Edit" onclick="editEmployee({{ emp.id }})">✏</button>
+              <button class="btn btn-danger btn-sm btn-icon" title="Delete" onclick="confirmDelete({{ emp.id }}, '{{ emp.first_name }} {{ emp.last_name }}')">🗑</button>
+            </div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="8" style="text-align:center;padding:2.5rem;color:var(--gray-400);">No employees found.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  <div style="padding:1rem 1.5rem;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--gray-200);">
+    <span class="text-sm text-gray">Page {{ employees.number }} of {{ employees.paginator.num_pages }}</span>
+    <div class="pagination">
+      {% if employees.has_previous %}
+        <a href="?page={{ employees.previous_page_number }}" class="page-btn">‹</a>
+      {% endif %}
+      {% for num in employees.paginator.page_range %}
+        {% if employees.number == num %}
+          <span class="page-btn active">{{ num }}</span>
+        {% elif num >= employees.number|add:"-2" and num <= employees.number|add:"2" %}
+          <a href="?page={{ num }}" class="page-btn">{{ num }}</a>
+        {% endif %}
+      {% endfor %}
+      {% if employees.has_next %}
+        <a href="?page={{ employees.next_page_number }}" class="page-btn">›</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ══ ADD / EDIT EMPLOYEE MODAL ══
+     NOTE: Fields are dynamically derived from the Employee model.
+     Each field follows its database column data type:
+       - CharField → <input type="text">
+       - EmailField → <input type="email">
+       - DateField → <input type="date">
+       - ForeignKey → <select> populated from related model
+       - CharField with choices → <select> with defined choices
+-->
+<div class="modal-backdrop" id="add-employee-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2 id="emp-modal-title">Add New Employee</h2>
+      <button class="btn-close" onclick="closeModal('add-employee-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- Tab Navigation -->
+      <div class="tab-bar">
+        <button class="tab-btn active" onclick="switchTab('tab-personal', this)">Personal Info</button>
+        <button class="tab-btn" onclick="switchTab('tab-employment', this)">Employment</button>
+        <button class="tab-btn" onclick="switchTab('tab-contact', this)">Account Details</button>
+      </div>
+
+      <form id="employee-form" method="post" action="{% url 'employees:create' %}">
+        {% csrf_token %}
+        <input type="hidden" id="emp-form-id" name="employee_id" value="">
+
+        <!-- Tab 1: Personal Information -->
+        <div class="tab-panel active" id="tab-personal">
+          <span class="modal-section-label">Personal Information</span>
+          <div class="modal-form-grid">
+            <!-- first_name: CharField(max_length=100) -->
+            <div class="form-group">
+              <label class="form-label">First Name <span style="color:var(--danger)">*</span></label>
+              <input type="text" name="first_name" class="form-control" maxlength="100" required placeholder="Juan">
+            </div>
+            <!-- last_name: CharField(max_length=100) -->
+            <div class="form-group">
+              <label class="form-label">Last Name <span style="color:var(--danger)">*</span></label>
+              <input type="text" name="last_name" class="form-control" maxlength="100" required placeholder="Dela Cruz">
+            </div>
+            <!-- email: EmailField(unique=True) -->
+            <div class="form-group">
+              <label class="form-label">Email <span style="color:var(--danger)">*</span></label>
+              <input type="email" name="email" class="form-control" required placeholder="juan@company.com">
+            </div>
+            <!-- phone: CharField -->
+            <div class="form-group">
+              <label class="form-label">Phone</label>
+              <input type="tel" name="phone" class="form-control" placeholder="+63 912 345 6789">
+            </div>
+            <!-- address: TextField -->
+            <div class="form-group full">
+              <label class="form-label">Address</label>
+              <textarea name="address" class="form-control" rows="2" placeholder="Street, City, Province"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 2: Employment Details -->
+        <div class="tab-panel" id="tab-employment">
+          <span class="modal-section-label">Employment Details</span>
+          <div class="modal-form-grid">
+            <!-- employee_code: CharField(unique=True) -->
+            <div class="form-group">
+              <label class="form-label">Employee Code <span style="color:var(--danger)">*</span></label>
+              <input type="text" name="employee_code" id="emp-code-input" class="form-control"
+       value="{{ next_emp_code }}"
+       placeholder="{{ next_emp_code }}"
+       required
+       style="font-family:monospace;font-weight:700;color:var(--blue-800);">
+<div style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem;">
+  Auto-generated. You may override it, but it must be unique.
+</div>
+            </div>
+            <!-- date_hired: DateField -->
+            <div class="form-group">
+              <label class="form-label">Date Hired <span style="color:var(--danger)">*</span></label>
+              <input type="date" name="date_hired" class="form-control" required>
+            </div>
+            <!-- employment_type: CharField choices=['regular','contract'] -->
+            <div class="form-group">
+              <label class="form-label">Employment Type <span style="color:var(--danger)">*</span></label>
+              <select name="employment_type" class="form-control" required>
+                <option value="">Select type…</option>
+                <option value="regular">Regular</option>
+                <option value="contract">Contract</option>
+              </select>
+            </div>
+            <!-- status: CharField choices=['active','inactive'] -->
+            <div class="form-group">
+              <label class="form-label">Status</label>
+              <select name="status" class="form-control">
+                <option value="active" selected>Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+            <!-- department_id: ForeignKey → Department -->
+            <div class="form-group">
+              <label class="form-label">Department</label>
+              <select name="department_id" class="form-control" id="dept-select" onchange="loadPositions(this.value)">
+                <option value="">Select department…</option>
+                {% for dept in departments %}
+                <option value="{{ dept.id }}">{{ dept.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <!-- position_id: ForeignKey → Position (filtered by department) -->
+            <div class="form-group">
+              <label class="form-label">Position</label>
+              <select name="position_id" class="form-control" id="position-select">
+                <option value="">Select department first…</option>
+              </select>
+            </div>
+            <!-- salary_grade_id: ForeignKey → SalaryGrade -->
+            <div class="form-group full">
+              <label class="form-label">Salary Grade</label>
+              <select name="salary_grade_id" class="form-control">
+                <option value="">Select salary grade…</option>
+                {% for sg in salary_grades %}
+                <option value="{{ sg.id }}">{{ sg.name }} — Base: ₱{{ sg.base_salary|floatformat:2 }}</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tab 3: Contact / Account -->
+        <div class="tab-panel" id="tab-contact">
+          <span class="modal-section-label">System Account (Optional)</span>
+          <div class="modal-form-grid">
+            <div class="form-group">
+              <label class="form-label">Username</label>
+              <input type="text" name="username" class="form-control" placeholder="Leave blank to auto-generate">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Role</label>
+              <select name="role_id" id="role-id-select" class="form-control">
+                <option value="">— No system access —</option>
+                <optgroup label="── Default Admin Roles ──">
+                  {% for role in roles %}{% if role.name == 'SuperAdmin' %}<option value="{{ role.id }}">👑 SuperAdmin — Full access</option>{% endif %}{% endfor %}
+                  {% for role in roles %}{% if role.name == 'HRAdmin' %}<option value="{{ role.id }}">🛡 HRAdmin — HR management</option>{% endif %}{% endfor %}
+                  {% for role in roles %}{% if role.name == 'StaffAdmin' %}<option value="{{ role.id }}">👤 StaffAdmin — Read-only</option>{% endif %}{% endfor %}
+                </optgroup>
+                <optgroup label="── Custom Roles ──">
+                  {% for role in roles %}{% if role.name != 'SuperAdmin' and role.name != 'HRAdmin' and role.name != 'StaffAdmin' %}<option value="{{ role.id }}">{{ role.name }}</option>{% endif %}{% endfor %}
+                </optgroup>
+              </select>
+              <div style="font-size:.74rem;color:var(--gray-400);margin-top:.3rem;">
+                Determines what this employee can access in the system.
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Temporary Password</label>
+              <input type="password" name="temp_password" class="form-control" placeholder="Auto-generated if blank">
+            </div>
+          </div>
+        </div>
+
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('add-employee-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitEmployeeForm()">💾 Save Employee</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Delete Confirm Modal ── -->
+<div class="modal-backdrop" id="delete-confirm-modal">
+  <div class="modal" style="max-width:380px;">
+    <div class="modal-header"><h2>Confirm Delete</h2><button class="btn-close" onclick="closeModal('delete-confirm-modal')">✕</button></div>
+    <div class="modal-body" style="text-align:center;padding:2rem;">
+      <div style="font-size:3rem;margin-bottom:.75rem;">⚠️</div>
+      <p style="font-size:.95rem;color:var(--gray-700);">Are you sure you want to delete <strong id="delete-emp-name"></strong>?</p>
+      <p class="text-sm text-gray mt-2">This action cannot be undone. All related records (attendance, payroll) will be affected.</p>
+    </div>
+    <div class="modal-footer" style="justify-content:center;gap:.75rem;">
+      <button class="btn btn-outline" onclick="closeModal('delete-confirm-modal')">Cancel</button>
+      <button class="btn btn-danger" id="confirm-delete-btn">🗑 Yes, Delete</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="credentials-modal">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-header" style="background:var(--blue-900);">
+      <h2 style="color:var(--white);">✅ Employee Created</h2>
+      <button class="btn-close" onclick="closeCredentialsModal()"
+              style="color:rgba(255,255,255,.7);">✕</button>
+    </div>
+    <div class="modal-body" style="padding:1.75rem;">
+
+      <div style="text-align:center;margin-bottom:1.25rem;">
+        <div style="font-size:2.5rem;margin-bottom:.5rem;">🎉</div>
+        <p style="font-size:.95rem;font-weight:700;color:var(--gray-800);" id="cred-emp-name"></p>
+        <p style="font-size:.82rem;color:var(--gray-400);">has been added to the system.</p>
+      </div>
+
+      <div style="background:var(--blue-50);border:1.5px solid var(--blue-200);border-radius:var(--radius-md);padding:1.25rem;margin-bottom:1rem;">
+        <div style="font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--blue-600);margin-bottom:.85rem;">
+          🔑 System Account Credentials
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.75rem;">
+          <div>
+            <div style="font-size:.7rem;color:var(--gray-400);font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem;">Employee Code</div>
+            <div id="cred-code" style="font-family:monospace;font-weight:800;font-size:.95rem;color:var(--gray-900);"></div>
+          </div>
+          <div>
+            <div style="font-size:.7rem;color:var(--gray-400);font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem;">Role</div>
+            <div id="cred-role" style="font-weight:700;color:var(--gray-800);"></div>
+          </div>
+          <div>
+            <div style="font-size:.7rem;color:var(--gray-400);font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem;">Username</div>
+            <div id="cred-username" style="font-family:monospace;font-weight:800;font-size:1rem;color:var(--blue-800);"></div>
+          </div>
+          <div>
+            <div style="font-size:.7rem;color:var(--gray-400);font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem;">Temporary Password</div>
+            <div style="display:flex;align-items:center;gap:.5rem;">
+              <div id="cred-password" style="font-family:monospace;font-weight:800;font-size:1rem;color:var(--blue-800);letter-spacing:.08em;"></div>
+              <button onclick="togglePwdVisibility()" id="pwd-eye"
+                      style="background:none;border:none;cursor:pointer;font-size:1rem;color:var(--gray-400);">👁</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="background:#FFF9E0;border:1px solid #E5C000;border-radius:var(--radius-sm);padding:.7rem .9rem;font-size:.8rem;color:var(--gray-700);">
+        ⚠ <strong>Important:</strong> Save these credentials now. The password will not be shown again.
+        The employee must change their password on first login.
+      </div>
+
+    </div>
+    <div class="modal-footer" style="justify-content:space-between;">
+      <button class="btn btn-outline btn-sm" onclick="copyCredentials()">📋 Copy Credentials</button>
+      <button class="btn btn-primary" onclick="closeCredentialsModal()">Done</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── Tab switching ──────────────────────────────────────────
+  function switchTab(tabId, btn) {
+    document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.getElementById(tabId).classList.add('active');
+    btn.classList.add('active');
+  }
+
+  // ── Filter employees ───────────────────────────────────────
+  function filterEmployees() {
+    const q     = document.getElementById('emp-search').value.toLowerCase();
+    const dept  = document.getElementById('filter-dept').value;
+    const status= document.getElementById('filter-status').value;
+    const type  = document.getElementById('filter-type').value;
+    let count = 0;
+    document.querySelectorAll('#emp-tbody tr').forEach(row => {
+      const text   = row.textContent.toLowerCase();
+      const rDept  = row.dataset.dept   || '';
+      const rStat  = row.dataset.status || '';
+      const rType  = row.dataset.type   || '';
+      const show = (!q || text.includes(q))
+                && (!dept   || rDept  === dept)
+                && (!status || rStat  === status)
+                && (!type   || rType  === type);
+      row.style.display = show ? '' : 'none';
+      if (show) count++;
+    });
+    document.getElementById('emp-count').textContent = `Showing ${count} employees`;
+  }
+
+  // ── Load positions by department (AJAX) ───────────────────
+  async function loadPositions(deptId) {
+    const sel = document.getElementById('position-select');
+    sel.innerHTML = '<option value="">Loading…</option>';
+    if (!deptId) { sel.innerHTML = '<option value="">Select department first…</option>'; return; }
+    try {
+      const res = await fetch(`{% url 'employees:positions_by_dept' %}?dept_id=${deptId}`);
+      const data = await res.json();
+      sel.innerHTML = '<option value="">Select position…</option>' +
+        data.positions.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
+    } catch { sel.innerHTML = '<option value="">Error loading positions</option>'; }
+  }
+
+  // ── Submit employee form ───────────────────────────────────
+  function submitEmployeeForm() {
+    const form = document.getElementById('employee-form');
+    const data = new FormData(form);
+    const action = data.get('employee_id') ? '{% url "employees:update" pk=0 %}'.replace('/0/', `/${data.get('employee_id')}/`) : '{% url "employees:create" %}';
+    form.action = action;
+    form.submit();
+  }
+
+  // ── Edit employee ──────────────────────────────────────────
+  async function editEmployee(id) {
+    try {
+      const res = await fetch(`{% url 'employees:get_json' pk=0 %}`.replace('/0/', `/${id}/`));
+      const emp = await res.json();
+      document.getElementById('emp-modal-title').textContent = 'Edit Employee';
+      document.getElementById('emp-form-id').value = emp.id;
+      const form = document.getElementById('employee-form');
+      for (const [key, val] of Object.entries(emp)) {
+        const input = form.querySelector(`[name="${key}"]`);
+        if (input) input.value = val ?? '';
+      }
+      // Pre-select the role dropdown from SystemUser role
+      const roleSelect = document.getElementById('role-id-select');
+      if (roleSelect) roleSelect.value = emp.role_id ?? '';
+      openModal('add-employee-modal');
+    } catch { showToast('Error loading employee data.', 'error'); }
+  }
+
+  function viewEmployee(id) {
+    window.location.href = `{% url 'employees:detail' pk=0 %}`.replace('/0/', `/${id}/`);
+  }
+
+  // ── Delete ─────────────────────────────────────────────────
+  function confirmDelete(id, name) {
+    document.getElementById('delete-emp-name').textContent = name;
+    document.getElementById('confirm-delete-btn').onclick = () => {
+      const form = document.createElement('form');
+      form.method = 'post';
+      form.action = `{% url 'employees:delete' pk=0 %}`.replace('/0/', `/${id}/`);
+      form.innerHTML = `{% csrf_token %}`;
+      document.body.appendChild(form);
+      form.submit();
+    };
+    openModal('delete-confirm-modal');
+  }
+
+  function exportEmployees() {
+    window.location.href = "{% url 'employees:export' %}";
+  }
+</script>
+
+<script>
+  // ── Auto-open credentials modal if session has new employee data ──────────
+  {% if request.session.new_employee_credentials %}
+  const newCreds = {{ request.session.new_employee_credentials|safe }};
+  document.addEventListener('DOMContentLoaded', () => {
+    showCredentials(
+      newCreds.employee_name,
+      newCreds.employee_code,
+      newCreds.username,
+      newCreds.password,
+      newCreds.role
+    );
+  });
+  {% endif %}
+
+  // Store plain password for toggle
+  let _plainPassword = '';
+  let _pwdVisible = false;
+
+  function showCredentials(name, code, username, password, role) {
+    _plainPassword = password;
+    document.getElementById('cred-emp-name').textContent  = name;
+    document.getElementById('cred-code').textContent      = code;
+    document.getElementById('cred-username').textContent  = username;
+    document.getElementById('cred-role').textContent      = role;
+    // Show as dots by default
+    document.getElementById('cred-password').textContent  = '••••••••••';
+    _pwdVisible = false;
+    openModal('credentials-modal');
+    // Clear from session via AJAX so it doesn't show again on refresh
+    fetch("{% url 'employees:clear_credentials_session' %}", {
+      method: 'POST',
+      headers: { 'X-CSRFToken': getCsrfToken() },
+    });
+  }
+
+  function togglePwdVisibility() {
+    _pwdVisible = !_pwdVisible;
+    document.getElementById('cred-password').textContent = _pwdVisible ? _plainPassword : '••••••••••';
+    document.getElementById('pwd-eye').textContent = _pwdVisible ? '🙈' : '👁';
+  }
+
+  function closeCredentialsModal() {
+    _plainPassword = '';
+    closeModal('credentials-modal');
+    // Re-generate the employee code field for the next new employee
+    fetch("{% url 'employees:next_code' %}")
+      .then(r => r.json())
+      .then(d => {
+        const inp = document.getElementById('emp-code-input');
+        if (inp) inp.value = d.code;
+      });
+  }
+
+  function copyCredentials() {
+    const username = document.getElementById('cred-username').textContent;
+    const code     = document.getElementById('cred-code').textContent;
+    const name     = document.getElementById('cred-emp-name').textContent;
+    const role     = document.getElementById('cred-role').textContent;
+    const text = `Employee: ${name}\nEmployee Code: ${code}\nUsername: ${username}\nPassword: ${_plainPassword}\nRole: ${role}`;
+    navigator.clipboard.writeText(text).then(() => {
+      showToast('Credentials copied to clipboard!', 'success');
+    }).catch(() => {
+      showToast('Copy failed — please manually note the credentials.', 'error');
+    });
+  }
+</script>
+
+{% endblock %}

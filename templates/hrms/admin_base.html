@@ -1,0 +1,219 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}HRMS{% endblock %} – {% block site_name %}HR Management System{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'css/base.css' %}"/>
+  {% block extra_css %}{% endblock %}
+</head>
+<body>
+
+<div class="admin-layout">
+
+  <!-- ══ SIDEBAR ══ -->
+  <aside class="sidebar" id="sidebar">
+    <button class="sidebar-toggle" id="sidebar-toggle" title="Toggle Sidebar">❯</button>
+
+    <!-- Company branding -->
+    <div class="sidebar-logo">
+      <div class="logo-mark" id="logo-mark">
+        {% if company_logo %}
+          <img src="{{ company_logo }}" alt="Logo"
+               style="width:100%;height:100%;object-fit:cover;border-radius:var(--radius-sm);">
+        {% else %}
+          {{ company_initials|default:"HR" }}
+        {% endif %}
+      </div>
+      <div class="logo-text">
+        {{ company_name|default:"Your Company" }}
+        <span>HR Management System</span>
+      </div>
+    </div>
+
+    <nav class="sidebar-nav">
+
+      <!-- ── HR Management ── -->
+      <div class="nav-section">
+        <div class="nav-section-label">HR Management</div>
+
+        <button class="nav-group-toggle" data-group="nav-hr">
+          <span class="icon">👥</span>
+          <span class="label">Employees</span>
+          <span class="chevron">›</span>
+        </button>
+        <div class="nav-submenu" id="nav-hr">
+          <a href="{% url 'employees:list' %}">Employee List</a>
+          <a href="{% url 'employees:departments' %}">Departments</a>
+          <a href="{% url 'employees:positions' %}">Positions</a>
+          <a href="{% url 'employees:salary_grades' %}">Salary Grades</a>
+        </div>
+
+        {% if is_super_admin %}
+        <button class="nav-group-toggle" data-group="nav-users">
+          <span class="icon">🔑</span>
+          <span class="label">Users &amp; Roles</span>
+          <span class="chevron">›</span>
+        </button>
+        <div class="nav-submenu" id="nav-users">
+          <a href="{% url 'employees:users' %}">System Users</a>
+          <a href="{% url 'employees:roles' %}">Roles &amp; Permissions</a>
+        </div>
+        {% endif %}
+      </div>
+
+      <!-- ── Attendance ── -->
+      <div class="nav-section">
+        <div class="nav-section-label">Attendance</div>
+        <button class="nav-group-toggle" data-group="nav-att">
+          <span class="icon">📋</span>
+          <span class="label">Attendance</span>
+          <span class="chevron">›</span>
+        </button>
+        <div class="nav-submenu" id="nav-att">
+          <a href="{% url 'attendance:dashboard' %}">Daily Dashboard</a>
+          <a href="{% url 'attendance:records' %}">Attendance Records</a>
+          <a href="{% url 'attendance:otp_manager' %}">🔢 OTP Manager</a>
+          <a href="{% url 'attendance:audit_log' %}">Audit Log</a>
+        </div>
+      </div>
+
+      <!-- ── Payroll ── -->
+      <div class="nav-section">
+        <div class="nav-section-label">Payroll</div>
+        <button class="nav-group-toggle" data-group="nav-payroll">
+          <span class="icon">💰</span>
+          <span class="label">Payroll</span>
+          <span class="chevron">›</span>
+        </button>
+        <div class="nav-submenu" id="nav-payroll">
+          <a href="{% url 'payroll:periods' %}">Payroll Periods</a>
+          {% if is_hr_admin %}
+          <a href="{% url 'payroll:run' %}">Run Payroll</a>
+          {% endif %}
+          <a href="{% url 'payroll:components' %}">Salary Components</a>
+          <a href="{% url 'payroll:report' %}">Payroll Report</a>
+          <a href="{% url 'payroll:payslips' %}">Payslips</a>
+          <a href="{% url 'payroll:adjustments' %}">Adjustments</a>
+        </div>
+      </div>
+
+      <!-- ── Calendar ── -->
+      <div class="nav-section">
+        <div class="nav-section-label">Calendar</div>
+        <a class="nav-link" href="{% url 'calendar_app:index' %}">
+          <span class="icon">📅</span>
+          <span class="label">Company Calendar</span>
+        </a>
+      </div>
+
+      <!-- ── Settings (SuperAdmin only) ── -->
+      {% if is_super_admin %}
+      <div class="nav-section">
+        <div class="nav-section-label">Settings</div>
+        <a class="nav-link" href="{% url 'employees:company_settings' %}">
+          <span class="icon">⚙️</span>
+          <span class="label">Company Settings</span>
+        </a>
+        <a class="nav-link" href="{% url 'accounts:audit_log' %}">
+          <span class="icon">📊</span>
+          <span class="label">Audit Log</span>
+        </a>
+      </div>
+      {% endif %}
+
+    </nav>
+
+    <!-- Role badge at bottom of sidebar -->
+    <div style="padding:.75rem 1rem;border-top:1px solid rgba(255,255,255,.08);
+                display:flex;align-items:center;gap:.6rem;">
+      <div style="width:8px;height:8px;border-radius:50%;background:#4ADE80;flex-shrink:0;"></div>
+      <div style="overflow:hidden;">
+        <div style="font-size:.72rem;font-weight:700;color:rgba(255,255,255,.8);
+                    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+          {{ request.user.get_full_name|default:request.user.username }}
+        </div>
+        <div style="font-size:.65rem;color:rgba(255,255,255,.35);">
+          {% if user_role %}{{ user_role.name }}{% else %}No Role{% endif %}
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ══ MAIN AREA ══ -->
+  <div style="flex:1;display:flex;flex-direction:column;">
+
+    <!-- Top header -->
+    <header class="admin-header" id="admin-header">
+      <div>
+        <div class="header-title">{% block page_title %}Dashboard{% endblock %}</div>
+        <div class="header-breadcrumb">{% block breadcrumb %}Home{% endblock %}</div>
+      </div>
+      <div class="header-right">
+        {% block header_actions %}{% endblock %}
+
+        <div class="header-user">
+          <div class="header-avatar">{{ request.user.username|slice:":2"|upper }}</div>
+          <div>
+            <div style="font-size:.85rem;font-weight:600;color:var(--white);">
+              {{ request.user.get_full_name|default:request.user.username }}
+            </div>
+            {% if user_role %}
+            <div style="font-size:.7rem;color:rgba(255,255,255,.5);">
+              {{ user_role.name }}
+            </div>
+            {% endif %}
+          </div>
+        </div>
+
+        <button class="btn-logout" onclick="confirmLogout()">⏻ Logout</button>
+      </div>
+    </header>
+
+    <!-- Page content -->
+    <main class="admin-content" id="admin-content">
+      {% block content %}{% endblock %}
+    </main>
+
+  </div>
+</div>
+
+<!-- Logout Confirmation Modal -->
+<div class="modal-backdrop" id="logout-modal">
+  <div class="modal" style="max-width:400px;">
+    <div class="modal-header">
+      <h2>Confirm Logout</h2>
+      <button class="btn-close" onclick="closeModal('logout-modal')">✕</button>
+    </div>
+    <div class="modal-body" style="text-align:center;padding:2rem 1.6rem;">
+      <div style="font-size:3rem;margin-bottom:1rem;">🚪</div>
+      <p style="font-size:1rem;color:var(--gray-600);">Are you sure you want to log out?</p>
+    </div>
+    <div class="modal-footer" style="justify-content:center;gap:1rem;">
+      <button class="btn btn-outline" onclick="closeModal('logout-modal')">Cancel</button>
+      <button class="btn btn-danger" onclick="doLogout()">Yes, Logout</button>
+    </div>
+  </div>
+</div>
+
+<form id="logout-form" method="post" action="{% url 'accounts:logout' %}" style="display:none;">
+  {% csrf_token %}
+</form>
+
+<div class="toast-container" id="toast-container"></div>
+
+{% if messages %}
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    {% for msg in messages %}
+      showToast("{{ msg|escapejs }}", "{{ msg.tags|default:'info' }}");
+    {% endfor %}
+  });
+</script>
+{% endif %}
+
+<script src="{% static 'js/base.js' %}"></script>
+{% block extra_js %}{% endblock %}
+</body>
+</html>

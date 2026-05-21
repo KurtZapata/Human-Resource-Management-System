@@ -1,0 +1,292 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Departments{% endblock %}
+{% block page_title %}Departments{% endblock %}
+{% block breadcrumb %}HR Management › Departments{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-gold btn-sm" onclick="openModal('add-dept-modal')">+ Add Department</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .dept-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(290px,1fr)); gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .dept-card {
+    background: var(--white); border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius-lg); padding: 1.25rem 1.4rem;
+    box-shadow: var(--shadow-sm); transition: all .2s; position: relative; overflow: hidden;
+  }
+  .dept-card:hover { border-color: var(--blue-500); box-shadow: var(--shadow-md); transform: translateY(-2px); }
+  .dept-card::before {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+    background: linear-gradient(90deg, var(--blue-700), var(--gold-500));
+  }
+  .dept-icon {
+    width: 44px; height: 44px; border-radius: var(--radius-md);
+    background: var(--blue-100); color: var(--blue-800);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.2rem; margin-bottom: .85rem;
+  }
+  .dept-name { font-size: 1rem; font-weight: 800; color: var(--gray-900); margin-bottom: .3rem; }
+  .dept-desc { font-size: .82rem; color: var(--gray-400); line-height: 1.5; min-height: 2.4rem;
+               overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .dept-meta {
+    display: flex; gap: .75rem; margin-top: .85rem; padding-top: .75rem;
+    border-top: 1px dashed var(--gray-200);
+  }
+  .dept-meta-item { display: flex; flex-direction: column; gap: .1rem; }
+  .dept-meta-item .label { font-size: .65rem; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--gray-400); }
+  .dept-meta-item .val   { font-size: .88rem; font-weight: 800; color: var(--gray-800); }
+  .dept-actions { display: flex; gap: .4rem; margin-top: .85rem; }
+
+  /* Positions inline table inside dept card */
+  .dept-positions {
+    margin-top: .75rem; padding: .65rem .75rem;
+    background: var(--gray-50); border-radius: var(--radius-sm); display: none;
+  }
+  .dept-positions.open { display: block; }
+  .dept-positions h5 { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--gray-400); margin-bottom: .5rem; }
+  .pos-chip {
+    display: inline-flex; align-items: center; gap: .35rem;
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: 20px; padding: .18rem .6rem; font-size: .75rem; font-weight: 600;
+    color: var(--gray-700); margin: .15rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Stats -->
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.5rem;">
+  <div class="stat-card">
+    <div class="stat-icon blue">🏢</div>
+    <div><div class="stat-num">{{ departments|length }}</div><div class="stat-label">Total Departments</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon gold">👥</div>
+    <div>
+      <div class="stat-num">{% for d in departments %}{{ d.emp_count|add:0 }}{% if not forloop.last %}+{% endif %}{% endfor %}</div>
+      <div class="stat-label">Total Employees</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon green">📋</div>
+    <div>
+      <div class="stat-num">{% for d in departments %}{{ d.position_count|add:0 }}{% if not forloop.last %}+{% endif %}{% endfor %}</div>
+      <div class="stat-label">Total Positions</div>
+    </div>
+  </div>
+</div>
+
+<!-- Department Cards -->
+<div class="dept-grid">
+  {% for dept in departments %}
+  <div class="dept-card">
+    <div class="dept-icon">🏢</div>
+    <div class="dept-name">{{ dept.name }}</div>
+    <div class="dept-desc">{{ dept.description|default:"No description provided." }}</div>
+
+    <div class="dept-meta">
+      <div class="dept-meta-item">
+        <span class="label">Employees</span>
+        <span class="val">{{ dept.emp_count }}</span>
+      </div>
+      <div class="dept-meta-item">
+        <span class="label">Positions</span>
+        <span class="val">{{ dept.position_count }}</span>
+      </div>
+      <div class="dept-meta-item">
+        <span class="label">Created</span>
+        <span class="val" style="font-size:.78rem;">{{ dept.created_at|date:"M d, Y" }}</span>
+      </div>
+    </div>
+
+    <!-- Positions toggle -->
+    {% if dept.positions %}
+    <div class="dept-positions" id="positions-{{ dept.id }}">
+      <h5>Positions in this Department</h5>
+      {% for pos in dept.positions %}
+        <span class="pos-chip">📌 {{ pos.name }}</span>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="dept-actions">
+      {% if dept.positions %}
+      <button class="btn btn-outline btn-sm" style="flex:0;"
+              onclick="togglePositions({{ dept.id }})">📋 Positions</button>
+      {% endif %}
+      <button class="btn btn-primary btn-sm" style="flex:1;"
+              onclick="editDept({{ dept.id }}, '{{ dept.name|escapejs }}', '{{ dept.description|escapejs }}')">
+        ✏ Edit
+      </button>
+      <button class="btn btn-outline btn-sm" style="flex:1;"
+              onclick="openModal('add-position-modal'); document.getElementById('pos-dept-id').value={{ dept.id }}; document.getElementById('pos-dept-name').textContent='{{ dept.name|escapejs }}'">
+        + Position
+      </button>
+      <button class="btn btn-danger btn-sm btn-icon"
+              onclick="deleteDept({{ dept.id }}, '{{ dept.name|escapejs }}', {{ dept.emp_count }})">🗑</button>
+    </div>
+  </div>
+  {% empty %}
+  <div style="grid-column:1/-1;text-align:center;padding:3rem;color:var(--gray-400);">
+    <div style="font-size:2.5rem;margin-bottom:.75rem;">🏢</div>
+    No departments yet. Add your first one.
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Department + Positions table -->
+{% if departments %}
+<div class="card">
+  <div class="card-header"><h3>Department Directory</h3></div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Department</th>
+          <th>Description</th>
+          <th>Positions</th>
+          <th style="text-align:right;">Employees</th>
+          <th>Created</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for dept in departments %}
+        <tr>
+          <td><strong>{{ dept.name }}</strong></td>
+          <td style="color:var(--gray-500);max-width:220px;">{{ dept.description|truncatechars:60|default:"—" }}</td>
+          <td>
+            <span class="badge badge-blue">{{ dept.position_count }} position{{ dept.position_count|pluralize }}</span>
+          </td>
+          <td style="text-align:right;font-weight:700;">{{ dept.emp_count }}</td>
+          <td>{{ dept.created_at|date:"M d, Y" }}</td>
+          <td>
+            <div style="display:flex;gap:.35rem;">
+              <button class="btn btn-primary btn-sm btn-icon"
+                      onclick="editDept({{ dept.id }}, '{{ dept.name|escapejs }}', '{{ dept.description|escapejs }}')">✏</button>
+              <button class="btn btn-danger btn-sm btn-icon"
+                      onclick="deleteDept({{ dept.id }}, '{{ dept.name|escapejs }}', {{ dept.emp_count }})">🗑</button>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- ══ ADD / EDIT DEPARTMENT MODAL ══ -->
+<div class="modal-backdrop" id="add-dept-modal">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-header">
+      <h2 id="dept-modal-title">Add Department</h2>
+      <button class="btn-close" onclick="closeModal('add-dept-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="dept-form" method="post" action="{% url 'employees:departments' %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" id="dept-action" value="create">
+        <input type="hidden" name="dept_id" id="dept-id-input">
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Department Name <span style="color:var(--danger)">*</span></label>
+          <input type="text" name="name" id="dept-name-input" class="form-control"
+                 placeholder="e.g. Human Resources, Finance, Operations" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Description</label>
+          <textarea name="description" id="dept-desc-input" class="form-control" rows="3"
+                    placeholder="Brief description of this department's function…"></textarea>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('add-dept-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="document.getElementById('dept-form').submit()">💾 Save Department</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ ADD POSITION MODAL ══ -->
+<div class="modal-backdrop" id="add-position-modal">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header">
+      <h2>Add Position to <span id="pos-dept-name"></span></h2>
+      <button class="btn-close" onclick="closeModal('add-position-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="position-form" method="post" action="{% url 'employees:departments' %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create_position">
+        <input type="hidden" name="dept_id" id="pos-dept-id">
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Position Name <span style="color:var(--danger)">*</span></label>
+          <input type="text" name="pos_name" class="form-control"
+                 placeholder="e.g. HR Manager, Senior Developer" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Base Salary Override (₱)</label>
+          <input type="number" name="base_salary" class="form-control"
+                 step="0.01" min="0" placeholder="Leave blank to use salary grade">
+          <div style="font-size:.75rem;color:var(--gray-400);margin-top:.3rem;">
+            Optional. If set, overrides the salary grade base salary for this position.
+          </div>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('add-position-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="document.getElementById('position-form').submit()">💾 Add Position</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Confirm Modal -->
+<div class="modal-backdrop" id="delete-dept-modal">
+  <div class="modal" style="max-width:380px;">
+    <div class="modal-header"><h2>Delete Department</h2><button class="btn-close" onclick="closeModal('delete-dept-modal')">✕</button></div>
+    <div class="modal-body" style="text-align:center;padding:2rem;">
+      <div style="font-size:3rem;margin-bottom:.75rem;">⚠️</div>
+      <p>Delete <strong id="del-dept-name"></strong>?</p>
+      <p class="text-sm text-danger mt-2" id="del-dept-warning"></p>
+    </div>
+    <div class="modal-footer" style="justify-content:center;gap:.75rem;">
+      <button class="btn btn-outline" onclick="closeModal('delete-dept-modal')">Cancel</button>
+      <button class="btn btn-danger" id="confirm-del-dept">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  function togglePositions(id) {
+    document.getElementById('positions-' + id).classList.toggle('open');
+  }
+  function editDept(id, name, desc) {
+    document.getElementById('dept-modal-title').textContent = 'Edit Department';
+    document.getElementById('dept-action').value    = 'update';
+    document.getElementById('dept-id-input').value  = id;
+    document.getElementById('dept-name-input').value = name;
+    document.getElementById('dept-desc-input').value = desc;
+    openModal('add-dept-modal');
+  }
+  function deleteDept(id, name, empCount) {
+    document.getElementById('del-dept-name').textContent = name;
+    document.getElementById('del-dept-warning').textContent =
+      empCount > 0 ? `⚠ ${empCount} employee(s) belong to this department and will be unassigned.` : '';
+    document.getElementById('confirm-del-dept').onclick = () => {
+      const f = document.createElement('form');
+      f.method = 'post'; f.action = "{% url 'employees:departments' %}";
+      f.innerHTML = `{% csrf_token %}<input name="action" value="delete"><input name="dept_id" value="${id}">`;
+      document.body.appendChild(f); f.submit();
+    };
+    openModal('delete-dept-modal');
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,229 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}System Audit Log{% endblock %}
+{% block page_title %}System Audit Log{% endblock %}
+{% block breadcrumb %}Settings › Audit Log{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-outline btn-sm" style="color:var(--white);border-color:rgba(255,255,255,.4);"
+          onclick="exportAudit()">⬇ Export CSV</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .filter-card {
+    background:var(--white); border:1px solid var(--gray-200);
+    border-radius:var(--radius-lg); padding:.9rem 1.25rem;
+    display:flex; flex-wrap:wrap; gap:.75rem; align-items:flex-end;
+    margin-bottom:1.25rem;
+  }
+  .filter-card .form-group { flex:1; min-width:130px; }
+  .filter-card .form-group label { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--gray-500); display:block; margin-bottom:.3rem; }
+
+  /* Action color coding */
+  .action-pill {
+    display:inline-flex; align-items:center; gap:.3rem;
+    padding:.18rem .6rem; border-radius:4px; font-size:.75rem; font-weight:700;
+  }
+  .action-pill.CREATE    { background:#DCFCE7; color:#15803D; }
+  .action-pill.UPDATE    { background:#DBEAFE; color:#1E40AF; }
+  .action-pill.DELETE    { background:#FEE2E2; color:#B91C1C; }
+  .action-pill.LOGIN     { background:var(--blue-100); color:var(--blue-800); }
+  .action-pill.LOGOUT    { background:var(--gray-100); color:var(--gray-600); }
+  .action-pill.PAYROLL_RUN { background:#FEF3C7; color:#B45309; }
+  .action-pill.CONFIRM   { background:#DCFCE7; color:#15803D; }
+  .action-pill.UNCONFIRM { background:#FEE2E2; color:#B91C1C; }
+  .action-pill.DEFAULT   { background:var(--gray-100); color:var(--gray-600); }
+
+  /* JSON diff viewer */
+  .diff-btn {
+    font-size:.72rem; color:var(--blue-700); cursor:pointer; font-weight:600;
+    background:none; border:none; padding:0; font-family:var(--font-display);
+    text-decoration:underline;
+  }
+  .diff-panel {
+    display:none; margin-top:.5rem;
+    background:var(--gray-900); color:#A3E635;
+    border-radius:var(--radius-sm); padding:.65rem .85rem;
+    font-family:monospace; font-size:.75rem; white-space:pre-wrap; word-break:break-all;
+    max-height:200px; overflow-y:auto;
+  }
+  .diff-panel.open { display:block; }
+
+  /* Table text sizes */
+  .audit-table td { font-size:.83rem; vertical-align:top; }
+  .audit-table .ts { font-size:.78rem; }
+  .audit-table .ts strong { display:block; }
+  .audit-table .ts span   { color:var(--gray-400); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Filters ── -->
+<div class="filter-card">
+  <form method="get" action="{% url 'accounts:audit_log' %}" style="display:contents;">
+    <div class="form-group">
+      <label>User</label>
+      <select name="user_id" class="form-control">
+        <option value="">All Users</option>
+        {% for u in users %}
+        <option value="{{ u.id }}" {% if request.GET.user_id == u.id|stringformat:'s' %}selected{% endif %}>{{ u.username }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Action</label>
+      <select name="action" class="form-control">
+        <option value="">All Actions</option>
+        {% for t in action_types %}
+        <option value="{{ t }}" {% if request.GET.action == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Table</label>
+      <select name="table" class="form-control">
+        <option value="">All Tables</option>
+        {% for t in tables %}
+        <option value="{{ t }}" {% if request.GET.table == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>From</label>
+      <input type="date" name="from" class="form-control" value="{{ request.GET.from }}">
+    </div>
+    <div class="form-group">
+      <label>To</label>
+      <input type="date" name="to" class="form-control" value="{{ request.GET.to }}">
+    </div>
+    <div style="display:flex;gap:.4rem;align-items:flex-end;">
+      <button type="submit" class="btn btn-primary btn-sm">🔍 Filter</button>
+      <a href="{% url 'accounts:audit_log' %}" class="btn btn-outline btn-sm">Clear</a>
+    </div>
+  </form>
+</div>
+
+<!-- Summary stats -->
+<div style="display:grid;grid-template-columns:repeat(5,1fr);gap:.85rem;margin-bottom:1.25rem;">
+  {% for item in action_summary %}
+  <div class="stat-card" style="padding:1rem;">
+    <div>
+      <div style="font-size:1.2rem;font-weight:800;color:var(--gray-900);">{{ item.count }}</div>
+      <div style="font-size:.72rem;color:var(--gray-500);font-weight:600;margin-top:.1rem;">{{ item.action }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- ── Log Table ── -->
+<div class="card">
+  <div class="card-header">
+    <h3>Audit Trail</h3>
+    <span class="text-sm text-gray">{{ logs.paginator.count }} total entr{{ logs.paginator.count|pluralize:"y,ies" }}</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table audit-table">
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>User</th>
+          <th>Action</th>
+          <th>Table</th>
+          <th>Record ID</th>
+          <th>Changes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for log in logs %}
+        <tr>
+          <td class="ts">
+            <strong>{{ log.timestamp|date:"M d, Y" }}</strong>
+            <span>{{ log.timestamp|time:"H:i:s" }}</span>
+          </td>
+          <td>
+            <strong>{{ log.user.username|default:"System" }}</strong>
+            <div style="font-size:.72rem;color:var(--gray-400);">
+              {{ log.user.get_full_name|default:"" }}
+            </div>
+          </td>
+          <td>
+            <span class="action-pill
+              {% if log.action in 'CREATE,UPDATE,DELETE,LOGIN,LOGOUT,PAYROLL_RUN,CONFIRM,UNCONFIRM' %}
+                {{ log.action }}
+              {% else %}DEFAULT{% endif %}">
+              {% if log.action == 'CREATE' %}➕
+              {% elif log.action == 'UPDATE' %}✏
+              {% elif log.action == 'DELETE' %}🗑
+              {% elif log.action == 'LOGIN' %}🔑
+              {% elif log.action == 'LOGOUT' %}🚪
+              {% elif log.action == 'PAYROLL_RUN' %}💰
+              {% elif log.action == 'CONFIRM' %}✅
+              {% elif log.action == 'UNCONFIRM' %}↩
+              {% else %}•{% endif %}
+              {{ log.action }}
+            </span>
+          </td>
+          <td>
+            <code style="font-size:.75rem;background:var(--gray-100);padding:.1rem .4rem;border-radius:3px;">
+              {{ log.table_name }}
+            </code>
+          </td>
+          <td style="font-size:.78rem;color:var(--gray-500);">
+            #{{ log.record_id|default:"—" }}
+          </td>
+          <td>
+            {% if log.old_value or log.new_value %}
+            <button class="diff-btn" onclick="toggleDiff({{ log.id }})">View changes</button>
+            <div class="diff-panel" id="diff-{{ log.id }}">
+{% if log.old_value %}BEFORE: {{ log.old_value|pprint }}
+{% endif %}{% if log.new_value %}AFTER:  {{ log.new_value|pprint }}{% endif %}</div>
+            {% else %}
+            <span style="color:var(--gray-300);font-size:.75rem;">No data</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="6" style="text-align:center;padding:3rem;color:var(--gray-400);">
+            No audit log entries match your filters.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  <div style="padding:1rem 1.5rem;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--gray-200);">
+    <span class="text-sm text-gray">Page {{ logs.number }} of {{ logs.paginator.num_pages }}</span>
+    <div class="pagination">
+      {% if logs.has_previous %}
+        <a href="?page={{ logs.previous_page_number }}&{{ request.GET.urlencode }}" class="page-btn">‹</a>
+      {% endif %}
+      {% for num in logs.paginator.page_range %}
+        {% if logs.number == num %}
+          <span class="page-btn active">{{ num }}</span>
+        {% elif num >= logs.number|add:"-2" and num <= logs.number|add:"2" %}
+          <a href="?page={{ num }}&{{ request.GET.urlencode }}" class="page-btn">{{ num }}</a>
+        {% endif %}
+      {% endfor %}
+      {% if logs.has_next %}
+        <a href="?page={{ logs.next_page_number }}&{{ request.GET.urlencode }}" class="page-btn">›</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+  function toggleDiff(id) {
+    document.getElementById('diff-' + id).classList.toggle('open');
+  }
+  function exportAudit() {
+    const params = new URLSearchParams(window.location.search);
+    window.location.href = "{% url 'accounts:audit_log' %}?export=csv&" + params.toString();
+  }
+</script>
+{% endblock %}

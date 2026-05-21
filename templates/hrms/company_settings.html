@@ -1,0 +1,406 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Company Settings{% endblock %}
+{% block page_title %}Company Settings{% endblock %}
+{% block breadcrumb %}Settings › Company Configuration{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-gold btn-sm" onclick="document.getElementById('settings-form').submit()">💾 Save All Changes</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .settings-layout { display: grid; grid-template-columns: 260px 1fr; gap: 1.25rem; align-items: start; }
+  @media (max-width: 860px) { .settings-layout { grid-template-columns: 1fr; } }
+
+  /* Sidebar nav */
+  .settings-nav {
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-lg); overflow: hidden; box-shadow: var(--shadow-sm);
+    position: sticky; top: calc(var(--header-h) + 1rem);
+  }
+  .settings-nav-header { padding: .85rem 1rem; border-bottom: 1px solid var(--gray-200); font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--gray-400); }
+  .settings-nav-link {
+    display: flex; align-items: center; gap: .65rem;
+    padding: .65rem 1rem; font-size: .88rem; font-weight: 600; color: var(--gray-600);
+    cursor: pointer; border-left: 3px solid transparent; transition: all .15s;
+    background: none; border-top: none; border-right: none; border-bottom: none;
+    width: 100%; text-align: left; font-family: var(--font-display);
+  }
+  .settings-nav-link:hover, .settings-nav-link.active {
+    color: var(--blue-800); background: var(--blue-50); border-left-color: var(--blue-700);
+  }
+  .settings-nav-link .snav-icon { font-size: 1rem; width: 20px; text-align: center; }
+
+  /* Section panels */
+  .settings-section { display: none; }
+  .settings-section.active { display: block; }
+  .section-title {
+    font-size: 1rem; font-weight: 800; color: var(--gray-900); margin-bottom: .25rem;
+  }
+  .section-desc { font-size: .85rem; color: var(--gray-500); margin-bottom: 1.5rem; }
+
+  /* Logo preview */
+  .logo-upload-area {
+    border: 2px dashed var(--gray-300); border-radius: var(--radius-lg);
+    padding: 2rem; text-align: center; cursor: pointer; transition: all .2s;
+    position: relative;
+  }
+  .logo-upload-area:hover { border-color: var(--blue-500); background: var(--blue-50); }
+  .logo-preview {
+    max-width: 160px; max-height: 80px; object-fit: contain;
+    margin: 0 auto .75rem; display: block;
+  }
+  .logo-placeholder {
+    width: 80px; height: 80px; background: var(--blue-100); border-radius: var(--radius-md);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2rem; margin: 0 auto .75rem;
+  }
+
+  /* Color swatch preview */
+  .color-preview {
+    width: 32px; height: 32px; border-radius: var(--radius-sm);
+    border: 2px solid var(--gray-200); flex-shrink: 0;
+  }
+  .color-row { display: flex; align-items: center; gap: .75rem; }
+
+  /* Time config grid */
+  .time-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+
+  /* Preview card */
+  .preview-card {
+    border: 1px solid var(--gray-200); border-radius: var(--radius-lg);
+    overflow: hidden; box-shadow: var(--shadow-sm);
+  }
+  .preview-banner {
+    height: 60px; background: var(--blue-900);
+    display: flex; align-items: center; padding: 0 1rem; gap: .75rem;
+  }
+  .preview-logo-mark {
+    width: 32px; height: 32px; background: var(--gold-500); border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: .8rem; font-weight: 800; color: var(--gray-900);
+  }
+  .preview-company-name { color: var(--white); font-size: .9rem; font-weight: 700; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<form id="settings-form" method="post" action="{% url 'employees:company_settings' %}" enctype="multipart/form-data">
+  {% csrf_token %}
+
+  <div class="settings-layout">
+
+    <!-- ── Left: Settings Nav ── -->
+    <div class="settings-nav">
+      <div class="settings-nav-header">Settings</div>
+      <button class="settings-nav-link active" type="button" onclick="switchSection('sec-branding', this)">
+        <span class="snav-icon">🏢</span> Company Branding
+      </button>
+      <button class="settings-nav-link" type="button" onclick="switchSection('sec-schedule', this)">
+        <span class="snav-icon">🕐</span> Work Schedule
+      </button>
+      <button class="settings-nav-link" type="button" onclick="switchSection('sec-payroll', this)">
+        <span class="snav-icon">💰</span> Payroll Defaults
+      </button>
+      <button class="settings-nav-link" type="button" onclick="switchSection('sec-attendance', this)">
+        <span class="snav-icon">📋</span> Attendance Rules
+      </button>
+      <button class="settings-nav-link" type="button" onclick="switchSection('sec-system', this)">
+        <span class="snav-icon">⚙️</span> System
+      </button>
+    </div>
+
+    <!-- ── Right: Section Panels ── -->
+    <div>
+
+      <!-- SECTION 1: Branding -->
+      <div class="settings-section active" id="sec-branding">
+        <div class="card">
+          <div class="card-header"><h3>🏢 Company Branding</h3></div>
+          <div class="card-body">
+            <div class="section-desc">This information appears in the sidebar, login page, and printed payslips.</div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+              <!-- Left: form fields -->
+              <div>
+                <div class="form-group" style="margin-bottom:.9rem;">
+                  <label class="form-label">Company Name <span style="color:var(--danger)">*</span></label>
+                  <input type="text" name="company_name" class="form-control"
+                         value="{{ settings.company_name|default:'' }}"
+                         placeholder="Your Company Name" required
+                         oninput="updatePreview()">
+                </div>
+                <div class="form-group" style="margin-bottom:.9rem;">
+                  <label class="form-label">Initials / Short Code
+                    <span style="font-size:.72rem;color:var(--gray-400);">(shown in sidebar logo)</span>
+                  </label>
+                  <input type="text" name="company_initials" class="form-control"
+                         value="{{ settings.company_initials|default:'HR' }}"
+                         placeholder="HR" maxlength="4"
+                         oninput="updatePreview()">
+                </div>
+                <div class="form-group" style="margin-bottom:.9rem;">
+                  <label class="form-label">Company Logo</label>
+                  <div class="logo-upload-area" onclick="document.getElementById('logo-input').click()">
+                    {% if settings.company_logo %}
+                      <img src="{{ settings.company_logo.url }}" class="logo-preview" alt="Company Logo" id="logo-preview-img">
+                    {% else %}
+                      <div class="logo-placeholder" id="logo-placeholder">🏢</div>
+                    {% endif %}
+                    <div style="font-size:.82rem;color:var(--gray-500);">Click to upload logo</div>
+                    <div style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem;">PNG, JPG, SVG — max 2MB</div>
+                    <input type="file" id="logo-input" name="company_logo" accept="image/*" style="display:none;" onchange="previewLogo(this)">
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Login Page Background Image</label>
+                  <input type="file" name="login_bg_image" class="form-control" accept="image/*">
+                  <div style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem;">Shown in the left panel of the login page.</div>
+                </div>
+              </div>
+
+              <!-- Right: live preview -->
+              <div>
+                <div class="form-label" style="margin-bottom:.65rem;">Live Preview</div>
+                <div class="preview-card">
+                  <div class="preview-banner">
+                    <div class="preview-logo-mark" id="preview-initials">HR</div>
+                    <div class="preview-company-name" id="preview-name">Your Company</div>
+                  </div>
+                  <div style="padding:1rem;font-size:.82rem;color:var(--gray-500);">
+                    This is how your company name and logo mark will appear in the sidebar navigation.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION 2: Work Schedule -->
+      <div class="settings-section" id="sec-schedule">
+        <div class="card">
+          <div class="card-header"><h3>🕐 Work Schedule</h3></div>
+          <div class="card-body">
+            <div class="section-desc">
+              Defines the standard workday. Used to calculate late minutes, undertime, and daily rates.
+            </div>
+            <div class="time-grid">
+              <div class="form-group">
+                <label class="form-label">Workday Start Time</label>
+                <input type="time" name="workday_start" class="form-control"
+                       value="{{ settings.workday_start|time:'H:i'|default:'08:00' }}">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Workday End Time</label>
+                <input type="time" name="workday_end" class="form-control"
+                       value="{{ settings.workday_end|time:'H:i'|default:'17:00' }}">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Lunch Break Start</label>
+                <input type="time" name="lunch_start" class="form-control"
+                       value="{{ settings.lunch_start|time:'H:i'|default:'12:00' }}">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Lunch Break End</label>
+                <input type="time" name="lunch_end" class="form-control"
+                       value="{{ settings.lunch_end|time:'H:i'|default:'13:00' }}">
+              </div>
+            </div>
+            <div style="background:var(--blue-50);border-radius:var(--radius-sm);padding:.75rem 1rem;font-size:.82rem;color:var(--blue-800);margin-top:1rem;">
+              💡 <strong>Grace period:</strong> Employees logging in up to the grace period after start time will not be marked late.
+            </div>
+            <div class="form-group" style="margin-top:1rem;">
+              <label class="form-label">Late Grace Period (minutes)</label>
+              <input type="number" name="grace_period_minutes" class="form-control"
+                     value="{{ settings.grace_period_minutes|default:'0' }}" min="0" max="60" style="max-width:200px;">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION 3: Payroll Defaults -->
+      <div class="settings-section" id="sec-payroll">
+        <div class="card">
+          <div class="card-header"><h3>💰 Payroll Defaults</h3></div>
+          <div class="card-body">
+            <div class="section-desc">
+              Default computation rules applied to all payroll runs.
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+              <div class="form-group">
+                <label class="form-label">Working Days per Month</label>
+                <input type="number" name="working_days_per_month" class="form-control"
+                       value="{{ settings.working_days_per_month|default:'22' }}" min="1" max="31">
+                <div style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem;">Used to compute daily rate from monthly salary.</div>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Working Hours per Day</label>
+                <input type="number" name="working_hours_per_day" class="form-control"
+                       value="{{ settings.working_hours_per_day|default:'8' }}" min="1" max="24">
+              </div>
+              <div class="form-group">
+                <label class="form-label">Payroll Frequency</label>
+                <select name="payroll_frequency" class="form-control">
+                  <option value="semi_monthly" {% if settings.payroll_frequency == 'semi_monthly' %}selected{% endif %}>Semi-Monthly (15th & 30th)</option>
+                  <option value="monthly"      {% if settings.payroll_frequency == 'monthly' %}selected{% endif %}>Monthly</option>
+                  <option value="weekly"       {% if settings.payroll_frequency == 'weekly' %}selected{% endif %}>Weekly</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">OT Rate Multiplier</label>
+                <input type="number" name="ot_rate_multiplier" class="form-control"
+                       value="{{ settings.ot_rate_multiplier|default:'1.25' }}" step="0.01" min="1" max="5">
+                <div style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem;">e.g. 1.25 = 125% of hourly rate</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION 4: Attendance Rules -->
+      <div class="settings-section" id="sec-attendance">
+        <div class="card">
+          <div class="card-header"><h3>📋 Attendance Rules</h3></div>
+          <div class="card-body">
+            <div class="section-desc">Controls how attendance is tracked and OTP codes are managed.</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+              <div class="form-group">
+                <label class="form-label">OTP Expiry (minutes)</label>
+                <input type="number" name="otp_expiry_minutes" class="form-control"
+                       value="{{ settings.otp_expiry_minutes|default:'5' }}" min="1" max="60">
+              </div>
+              <div class="form-group">
+                <label class="form-label">AM/PM Split Time</label>
+                <input type="time" name="half_split_time" class="form-control"
+                       value="{{ settings.half_split_time|time:'H:i'|default:'13:00' }}">
+                <div style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem;">Time-ins before this = 1st Half. After = 2nd Half.</div>
+              </div>
+              <div class="form-group" style="grid-column:1/-1;">
+                <label class="form-label" style="display:flex;align-items:center;gap:.5rem;cursor:pointer;">
+                  <input type="checkbox" name="allow_manual_att" value="true"
+                         {% if settings.allow_manual_att %}checked{% endif %}
+                         style="accent-color:var(--blue-700);width:16px;height:16px;">
+                  Allow admin manual attendance entry
+                </label>
+              </div>
+              <div class="form-group" style="grid-column:1/-1;">
+                <label class="form-label" style="display:flex;align-items:center;gap:.5rem;cursor:pointer;">
+                  <input type="checkbox" name="require_otp_confirmation" value="true"
+                         {% if settings.require_otp_confirmation %}checked{% endif %}
+                         style="accent-color:var(--blue-700);width:16px;height:16px;">
+                  Require OTP for time-in/time-out (disable for testing)
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION 5: System -->
+      <div class="settings-section" id="sec-system">
+        <div class="card">
+          <div class="card-header"><h3>⚙️ System Information</h3></div>
+          <div class="card-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;font-size:.88rem;">
+              <div>
+                <div class="form-label">Django Version</div>
+                <div style="font-family:monospace;color:var(--gray-700);">{{ django_version }}</div>
+              </div>
+              <div>
+                <div class="form-label">Database</div>
+                <div style="font-family:monospace;color:var(--gray-700);">{{ db_engine }}</div>
+              </div>
+              <div>
+                <div class="form-label">Debug Mode</div>
+                <div>
+                  {% if debug_mode %}
+                  <span class="badge badge-warning">DEBUG ON</span>
+                  <div style="font-size:.72rem;color:var(--warning);margin-top:.2rem;">Turn off DEBUG in production!</div>
+                  {% else %}
+                  <span class="badge badge-success">Production Mode</span>
+                  {% endif %}
+                </div>
+              </div>
+              <div>
+                <div class="form-label">Time Zone</div>
+                <div style="font-family:monospace;color:var(--gray-700);">{{ time_zone }}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Danger zone -->
+        <div class="card" style="margin-top:1.25rem;border-color:#FECACA;">
+          <div class="card-header" style="background:#FFF5F5;border-bottom-color:#FECACA;">
+            <h3 style="color:var(--danger);">⚠ Danger Zone</h3>
+          </div>
+          <div class="card-body">
+            <p style="font-size:.85rem;color:var(--gray-600);margin-bottom:1rem;">
+              These actions are irreversible. Proceed with extreme caution.
+            </p>
+            <div style="display:flex;gap:.75rem;flex-wrap:wrap;">
+              <button type="button" class="btn btn-danger btn-sm"
+                      onclick="if(confirm('Clear ALL audit logs? This cannot be undone.')) document.getElementById('clear-audit-form').submit()">
+                🗑 Clear Audit Logs
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Save button row -->
+      <div style="display:flex;justify-content:flex-end;gap:.75rem;margin-top:1.25rem;">
+        <a href="{% url 'employees:list' %}" class="btn btn-outline">Cancel</a>
+        <button type="submit" class="btn btn-primary">💾 Save All Settings</button>
+      </div>
+
+    </div><!-- /right col -->
+  </div><!-- /settings-layout -->
+</form>
+
+<!-- Hidden danger forms -->
+<form id="clear-audit-form" method="post" action="{% url 'accounts:audit_log' %}" style="display:none;">
+  {% csrf_token %}<input type="hidden" name="action" value="clear_all">
+</form>
+
+<script>
+  function switchSection(id, btn) {
+    document.querySelectorAll('.settings-section').forEach(s => s.classList.remove('active'));
+    document.querySelectorAll('.settings-nav-link').forEach(b => b.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+    btn.classList.add('active');
+  }
+
+  function updatePreview() {
+    const name     = document.querySelector('[name="company_name"]').value || 'Your Company';
+    const initials = document.querySelector('[name="company_initials"]').value || 'HR';
+    document.getElementById('preview-name').textContent     = name;
+    document.getElementById('preview-initials').textContent = initials.slice(0,4).toUpperCase();
+  }
+
+  function previewLogo(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      let img = document.getElementById('logo-preview-img');
+      const ph = document.getElementById('logo-placeholder');
+      if (!img) {
+        img = document.createElement('img');
+        img.id = 'logo-preview-img';
+        img.className = 'logo-preview';
+        if (ph) ph.replaceWith(img);
+      }
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  // Init preview on load
+  updatePreview();
+</script>
+{% endblock %}

@@ -1,0 +1,11 @@
+services:
+  web:
+    build: .
+    container_name: hrms_django
+    ports:
+      - "10.71.0.105:8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - DEBUG=True
+      - ALLOWED_HOSTS=localhost,127.0.0.1,10.71.0.105

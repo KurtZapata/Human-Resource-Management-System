@@ -1,0 +1,390 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}System Users{% endblock %}
+{% block page_title %}System Users{% endblock %}
+{% block breadcrumb %}HR Management › System Users{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-gold btn-sm" onclick="openModal('add-user-modal')">+ Add User</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .users-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .user-card {
+    background: var(--white); border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius-lg); padding: 1.15rem 1.25rem;
+    box-shadow: var(--shadow-sm); transition: all .2s;
+  }
+  .user-card:hover { border-color: var(--blue-400); box-shadow: var(--shadow-md); }
+  .user-card.inactive { opacity: .6; filter: grayscale(.4); }
+  .user-card-header { display: flex; align-items: center; gap: .75rem; margin-bottom: .85rem; }
+  .user-av {
+    width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0;
+    background: var(--blue-800); color: var(--white);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: .95rem;
+  }
+  .user-av.inactive { background: var(--gray-400); }
+  .user-name { font-size: .92rem; font-weight: 800; color: var(--gray-800); }
+  .user-uname { font-size: .75rem; color: var(--gray-400); font-family: monospace; }
+  .user-role {
+    margin-left: auto; flex-shrink: 0;
+  }
+  .user-emp { font-size: .8rem; color: var(--gray-500); margin-bottom: .75rem; padding: .5rem .65rem; background: var(--gray-50); border-radius: var(--radius-sm); }
+  .user-meta { display: flex; gap: .5rem; flex-wrap: wrap; margin-bottom: .85rem; }
+  .user-actions { display: flex; gap: .4rem; border-top: 1px dashed var(--gray-200); padding-top: .75rem; }
+
+  /* Last login time */
+  .last-login { font-size: .72rem; color: var(--gray-400); }
+
+  /* Password reset section in modal */
+  .pwd-toggle { font-size: .82rem; color: var(--blue-700); cursor: pointer; font-weight: 600; }
+  .pwd-section { display: none; margin-top: .75rem; padding: .85rem; background: var(--gray-50); border-radius: var(--radius-sm); }
+  .pwd-section.open { display: block; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Stats -->
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;">
+  <div class="stat-card">
+    <div class="stat-icon blue">👤</div>
+    <div><div class="stat-num">{{ users|length }}</div><div class="stat-label">Total Users</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon green">✅</div>
+    <div><div class="stat-num">{{ stats.active }}</div><div class="stat-label">Active</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon red">🚫</div>
+    <div><div class="stat-num">{{ stats.inactive }}</div><div class="stat-label">Inactive</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon gold">🔑</div>
+    <div><div class="stat-num">{{ roles|length }}</div><div class="stat-label">Roles Available</div></div>
+  </div>
+</div>
+
+<!-- Toolbar -->
+<div style="display:flex;gap:.75rem;align-items:center;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-lg);padding:.85rem 1.25rem;margin-bottom:1.25rem;flex-wrap:wrap;">
+  <div class="search-bar" style="flex:1;min-width:200px;">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="user-search" placeholder="Search by name, username…" oninput="filterUsers()">
+  </div>
+  <select class="form-control" id="filter-role" style="width:auto;" onchange="filterUsers()">
+    <option value="">All Roles</option>
+    {% for role in roles %}
+    <option value="{{ role.name }}">{{ role.name }}</option>
+    {% endfor %}
+  </select>
+  <select class="form-control" id="filter-active" style="width:auto;" onchange="filterUsers()">
+    <option value="">All Status</option>
+    <option value="true">Active</option>
+    <option value="false">Inactive</option>
+  </select>
+</div>
+
+<!-- User Cards -->
+<div class="users-grid" id="users-grid">
+  {% for user in users %}
+  <div class="user-card {% if not user.is_active %}inactive{% endif %}"
+       data-name="{{ user.username }} {% if user.employee %}{{ user.employee.first_name }} {{ user.employee.last_name }}{% endif %}"
+       data-role="{{ user.role.name|default:'' }}"
+       data-active="{{ user.is_active|lower }}">
+
+    <div class="user-card-header">
+      <div class="user-av {% if not user.is_active %}inactive{% endif %}">
+        {{ user.username|slice:":2"|upper }}
+      </div>
+      <div>
+        <div class="user-name">
+          {% if user.employee %}
+            {{ user.employee.first_name }} {{ user.employee.last_name }}
+          {% else %}
+            {{ user.username }}
+          {% endif %}
+        </div>
+        <div class="user-uname">@{{ user.username }}</div>
+      </div>
+      <div class="user-role">
+        <span class="badge
+          {% if user.role.name == 'SuperAdmin' %}badge-danger
+          {% elif user.role.name == 'HRAdmin' %}badge-blue
+          {% else %}badge-gold{% endif %}">
+          {{ user.role.name|default:"No Role" }}
+        </span>
+      </div>
+    </div>
+
+    {% if user.employee %}
+    <div class="user-emp">
+      👤 {{ user.employee.employee_code }} — {{ user.employee.department.name|default:"No Department" }}
+    </div>
+    {% endif %}
+
+    <div class="user-meta">
+      <span class="badge {% if user.is_active %}badge-success{% else %}badge-danger{% endif %}">
+        {% if user.is_active %}Active{% else %}Inactive{% endif %}
+      </span>
+      <span class="last-login">
+        Last login: {{ user.last_login|date:"M d, Y H:i"|default:"Never" }}
+      </span>
+    </div>
+
+    <div class="user-actions">
+      <button class="btn btn-primary btn-sm" style="flex:1;"
+        onclick="editUser(
+          {{ user.id }},
+          '{{ user.username|escapejs }}',
+          {{ user.employee_id|default:'null' }},
+          {{ user.role_id|default:'null' }},
+          {{ user.is_active|lower }}
+        )">
+  ✏ Edit
+</button>
+      <button class="btn btn-outline btn-sm"
+              onclick="resetPassword({{ user.id }}, '{{ user.username|escapejs }}')">
+        🔒 Reset Pwd
+      </button>
+      <button class="btn btn-{% if user.is_active %}danger{% else %}primary{% endif %} btn-sm btn-icon"
+              onclick="toggleActive({{ user.id }}, {{ user.is_active|lower }}, '{{ user.username|escapejs }}')"
+              title="{% if user.is_active %}Deactivate{% else %}Activate{% endif %}">
+        {% if user.is_active %}🚫{% else %}✅{% endif %}
+      </button>
+    </div>
+  </div>
+  {% empty %}
+  <div style="grid-column:1/-1;text-align:center;padding:3rem;color:var(--gray-400);">
+    <div style="font-size:2.5rem;margin-bottom:.75rem;">👤</div>
+    No system users yet.
+  </div>
+  {% endfor %}
+</div>
+
+<!-- ══ ADD / EDIT USER MODAL ══ -->
+<div class="modal-body">
+      <form id="user-form" method="post" action="{% url 'employees:users' %}">
+        {% csrf_token %}
+        <input type="hidden" name="action"  id="user-action"  value="create">
+        <input type="hidden" name="user_id" id="user-id-input">
+
+        <!-- ── Role — shown first so it's impossible to miss ── -->
+        <div class="form-group" style="margin-bottom:1.1rem;">
+          <label class="form-label">
+            Admin Role
+            <span style="font-size:.72rem;color:var(--gray-400);font-weight:400;margin-left:.35rem;">
+              Controls what this user can access
+            </span>
+          </label>
+
+          <!-- Visual role cards -->
+          <div style="display:flex;flex-direction:column;gap:.4rem;margin-bottom:.6rem;"
+               id="role-card-group">
+            {% for role in roles %}
+            <label style="display:flex;align-items:flex-start;gap:.75rem;padding:.75rem .9rem;
+                          border:1.5px solid var(--gray-200);border-radius:var(--radius-md);
+                          cursor:pointer;transition:all .15s;"
+                   id="role-card-{{ role.id }}"
+                   onclick="selectRoleCard({{ role.id }})">
+              <input type="radio" name="role_id" value="{{ role.id }}"
+                     id="role-radio-{{ role.id }}"
+                     style="margin-top:.2rem;accent-color:var(--blue-700);flex-shrink:0;">
+              <div>
+                <div style="font-weight:700;font-size:.9rem;color:var(--gray-800);
+                            display:flex;align-items:center;gap:.5rem;">
+                  {% if role.name == 'SuperAdmin' %}👑
+                  {% elif role.name == 'HRAdmin' %}🛡
+                  {% else %}👤{% endif %}
+                  {{ role.name }}
+                </div>
+                <div style="font-size:.75rem;color:var(--gray-400);margin-top:.15rem;">
+                  {% if role.name == 'SuperAdmin' %}
+                    Full system access — all pages, settings, users, audit log
+                  {% elif role.name == 'HRAdmin' %}
+                    Full HR access — employees, attendance, payroll; cannot manage users or settings
+                  {% elif role.name == 'StaffAdmin' %}
+                    Limited access — view attendance and payroll reports only
+                  {% else %}
+                    {{ role.description|default:"Custom role" }}
+                  {% endif %}
+                </div>
+              </div>
+            </label>
+            {% endfor %}
+
+            <!-- No role option -->
+            <label style="display:flex;align-items:flex-start;gap:.75rem;padding:.75rem .9rem;
+                          border:1.5px solid var(--gray-200);border-radius:var(--radius-md);
+                          cursor:pointer;transition:all .15s;"
+                   id="role-card-none"
+                   onclick="selectRoleCard(null)">
+              <input type="radio" name="role_id" value=""
+                     id="role-radio-none" checked
+                     style="margin-top:.2rem;accent-color:var(--blue-700);flex-shrink:0;">
+              <div>
+                <div style="font-weight:700;font-size:.9rem;color:var(--gray-500);">
+                  🚫 No Admin Access
+                </div>
+                <div style="font-size:.75rem;color:var(--gray-400);margin-top:.15rem;">
+                  Employee can only access the time-in / time-out portal
+                </div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <hr style="border:none;border-top:1px solid var(--gray-200);margin:1rem 0;">
+
+        <!-- ── Account fields ── -->
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Username <span style="color:var(--danger)">*</span></label>
+          <input type="text" name="username" id="user-username" class="form-control"
+                 placeholder="e.g. jdelacruz" required autocomplete="off">
+        </div>
+
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Link to Employee</label>
+          <select name="employee_id" id="user-employee" class="form-control">
+            <option value="">No linked employee (standalone account)</option>
+            {% for emp in employees %}
+            <option value="{{ emp.id }}">
+              {{ emp.last_name }}, {{ emp.first_name }} ({{ emp.employee_code }})
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Status</label>
+          <select name="is_active" id="user-status" class="form-control">
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+        </div>
+
+        <div id="password-section">
+          <div class="form-group">
+            <label class="form-label">
+              Password
+              <span style="color:var(--danger);" id="pwd-required">*</span>
+            </label>
+            <input type="password" name="password" id="user-password" class="form-control"
+                   placeholder="Set initial password" autocomplete="new-password">
+            <div style="font-size:.75rem;color:var(--gray-400);margin-top:.25rem;" id="pwd-hint">
+              Leave blank when editing to keep the existing password.
+            </div>
+          </div>
+        </div>
+
+      </form>
+    </div>
+
+<!-- ══ RESET PASSWORD MODAL ══ -->
+<div class="modal-backdrop" id="reset-pwd-modal">
+  <div class="modal" style="max-width:400px;">
+    <div class="modal-header">
+      <h2>Reset Password</h2>
+      <button class="btn-close" onclick="closeModal('reset-pwd-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="color:var(--gray-600);font-size:.88rem;margin-bottom:1rem;">
+        Setting new password for: <strong id="reset-username"></strong>
+      </p>
+      <form id="reset-pwd-form" method="post" action="{% url 'employees:users' %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="reset_password">
+        <input type="hidden" name="user_id" id="reset-user-id">
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">New Password <span style="color:var(--danger)">*</span></label>
+          <input type="password" name="new_password" class="form-control"
+                 placeholder="Enter new password" required minlength="8" autocomplete="new-password">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Confirm Password <span style="color:var(--danger)">*</span></label>
+          <input type="password" name="confirm_password" class="form-control"
+                 placeholder="Confirm new password" required minlength="8" autocomplete="new-password">
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('reset-pwd-modal')">Cancel</button>
+      <button class="btn btn-danger" onclick="document.getElementById('reset-pwd-form').submit()">🔒 Reset Password</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  function filterUsers() {
+    const q      = document.getElementById('user-search').value.toLowerCase();
+    const role   = document.getElementById('filter-role').value;
+    const active = document.getElementById('filter-active').value;
+    document.querySelectorAll('#users-grid .user-card').forEach(card => {
+      const name   = (card.dataset.name || '').toLowerCase();
+      const crole  = card.dataset.role || '';
+      const cactive= card.dataset.active || '';
+      card.style.display = (
+        (!q      || name.includes(q)) &&
+        (!role   || crole  === role)  &&
+        (!active || cactive === active)
+      ) ? '' : 'none';
+    });
+  }
+
+  function editUser(id, username, empId, roleId, isActive) {
+    document.getElementById('user-modal-title').textContent = 'Edit User';
+    document.getElementById('user-action').value            = 'update';
+    document.getElementById('user-id-input').value          = id;
+    document.getElementById('user-username').value          = username;
+    document.getElementById('user-employee').value          = empId   || '';
+    document.getElementById('user-status').value            = isActive ? 'true' : 'false';
+    document.getElementById('pwd-required').style.display   = 'none';
+    document.getElementById('pwd-hint').textContent         = 'Leave blank to keep existing password.';
+
+    // Pre-select the role card
+    selectRoleCard(roleId || null);
+
+    openModal('add-user-modal');
+  }
+
+  function selectRoleCard(roleId) {
+    // Reset all card borders
+    document.querySelectorAll('[id^="role-card-"]').forEach(card => {
+      card.style.borderColor   = 'var(--gray-200)';
+      card.style.background    = 'var(--white)';
+    });
+
+    const targetId = roleId ? `role-card-${roleId}` : 'role-card-none';
+    const card     = document.getElementById(targetId);
+    if (card) {
+      card.style.borderColor = 'var(--blue-600)';
+      card.style.background  = 'var(--blue-50)';
+    }
+
+    // Check the radio
+    const radioId = roleId ? `role-radio-${roleId}` : 'role-radio-none';
+    const radio   = document.getElementById(radioId);
+    if (radio) radio.checked = true;
+  }
+
+  function resetPassword(id, username) {
+    document.getElementById('reset-user-id').value   = id;
+    document.getElementById('reset-username').textContent = username;
+    openModal('reset-pwd-modal');
+  }
+
+  function toggleActive(id, currentlyActive, username) {
+    const action = currentlyActive ? 'deactivate' : 'activate';
+    if (!confirm(`${action.charAt(0).toUpperCase() + action.slice(1)} user "${username}"?`)) return;
+    const f = document.createElement('form');
+    f.method = 'post'; f.action = "{% url 'employees:users' %}";
+    f.innerHTML = `{% csrf_token %}<input name="action" value="${action}"><input name="user_id" value="${id}">`;
+    document.body.appendChild(f); f.submit();
+  }
+</script>
+{% endblock %}

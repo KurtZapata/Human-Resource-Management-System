@@ -1,0 +1,606 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Employee Time-In / Time-Out — {{ company_name }}</title>
+  <link rel="stylesheet" href="{% static 'css/base.css' %}"/>
+  <style>
+    /* ── Page shell ── */
+    body {
+      background: var(--blue-900);
+      min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; padding: 1.5rem 1rem 3rem;
+    }
+
+    /* ── Top bar ── */
+    .timein-topbar {
+      width: min(820px,100%);
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12);
+      border-radius: var(--radius-lg); padding: .85rem 1.25rem;
+      margin-bottom: 1.5rem; flex-wrap: wrap; gap: .75rem;
+    }
+    .topbar-brand { display: flex; align-items: center; gap: .75rem; }
+    .topbar-brand .mark {
+      width: 40px; height: 40px; background: var(--gold-500);
+      border-radius: var(--radius-sm); display: flex; align-items: center;
+      justify-content: center; font-weight: 800; font-size: .95rem; color: var(--gray-900);
+    }
+    .topbar-brand .name { font-size: .95rem; font-weight: 700; color: var(--white); }
+    .topbar-brand .sub  { font-size: .72rem; color: rgba(255,255,255,.5); }
+
+    /* ── Employee session bar (shown when logged in) ── */
+    .emp-session-bar {
+      width: min(820px,100%);
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: var(--radius-lg);
+      padding: .85rem 1.25rem;
+      display: flex; align-items: center; gap: .85rem;
+      margin-bottom: 1.25rem;
+    }
+    .ses-av {
+      width: 42px; height: 42px; border-radius: 50%;
+      background: var(--gold-500); color: var(--gray-900);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: .95rem; flex-shrink: 0;
+    }
+    .ses-name { font-weight: 700; color: var(--white); font-size: .95rem; }
+    .ses-code { font-size: .75rem; color: rgba(255,255,255,.5); margin-top: .1rem; }
+    .ses-logout {
+      margin-left: auto;
+      background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2);
+      border-radius: var(--radius-sm); color: var(--white);
+      padding: .35rem .85rem; font-family: var(--font-display);
+      font-size: .8rem; font-weight: 600; cursor: pointer; transition: all .2s;
+    }
+    .ses-logout:hover { background: rgba(255,255,255,.2); }
+
+    /* ── Datetime bar ── */
+    .datetime-bar {
+      width: min(820px,100%);
+      display: grid; grid-template-columns: 1fr auto 1fr;
+      gap: 1rem; margin-bottom: 1.5rem;
+    }
+    @media (max-width:600px) { .datetime-bar { grid-template-columns: 1fr; } }
+    .datetime-card {
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: var(--radius-lg); padding: 1.1rem 1.4rem; color: var(--white);
+    }
+    .datetime-card.center { text-align:center; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+    .dt-label  { font-size: .7rem; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color: rgba(255,255,255,.45); margin-bottom:.25rem; }
+    .dt-date   { font-size: 1rem; font-weight:700; color: var(--gold-400); }
+    .dt-clock  { font-size: 2.2rem; font-weight:800; font-variant-numeric:tabular-nums; letter-spacing:.03em; }
+    .dt-day    { font-size: .88rem; color: rgba(255,255,255,.6); margin-top:.1rem; }
+
+    /* ── Shift cards ── */
+    .shift-cards { display:grid; grid-template-columns:1fr 1fr; gap:1rem; width:100%; }
+    .shift-card { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1); border-radius:var(--radius-md); padding:.9rem 1.1rem; }
+    .shift-card h4 { font-size:.78rem; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:rgba(255,255,255,.45); margin-bottom:.5rem; }
+    .shift-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:.35rem; }
+    .shift-time-in  { color:#4ADE80; font-weight:700; font-size:.9rem; }
+    .shift-time-out { color:#FB923C; font-weight:700; font-size:.9rem; }
+
+    /* ══ LOGIN GATE (shown when NOT logged in) ══ */
+    .login-gate {
+      width: min(820px,100%);
+      background: var(--white);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-xl);
+      overflow: hidden;
+      display: grid; grid-template-columns: 1fr 1fr;
+    }
+    @media (max-width:580px) { .login-gate { grid-template-columns: 1fr; } .login-gate-left { display:none; } }
+
+    .login-gate-left {
+      background: var(--blue-800);
+      padding: 2.5rem;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 1rem; position: relative; overflow: hidden;
+    }
+    .login-gate-left::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse at 30% 40%, rgba(245,197,24,.15) 0%, transparent 60%);
+    }
+    .gate-icon { font-size: 3.5rem; position: relative; z-index: 1; }
+    .gate-title { font-size: 1.2rem; font-weight: 800; color: var(--white); text-align: center; position: relative; z-index: 1; }
+    .gate-sub   { font-size: .82rem; color: rgba(255,255,255,.55); text-align: center; position: relative; z-index: 1; line-height: 1.6; }
+
+    .login-gate-right { padding: 2.25rem 2.5rem; display: flex; flex-direction: column; justify-content: center; }
+    .login-gate-right h2 { font-size: 1.2rem; font-weight: 800; color: var(--gray-900); margin-bottom: .3rem; }
+    .login-gate-right p  { color: var(--gray-400); font-size: .85rem; margin-bottom: 1.5rem; }
+
+    .gate-submit {
+      width: 100%; padding: .75rem;
+      background: var(--blue-800); color: var(--white);
+      border: none; border-radius: var(--radius-sm);
+      font-family: var(--font-display); font-size: .95rem; font-weight: 700;
+      cursor: pointer; transition: all .2s; margin-top: .5rem;
+    }
+    .gate-submit:hover { background: var(--blue-700); transform: translateY(-1px); box-shadow: var(--shadow-md); }
+
+    .gate-error {
+      background: #FEE2E2; border: 1px solid #FECACA;
+      border-radius: var(--radius-sm); padding: .6rem .9rem;
+      color: var(--danger); font-size: .84rem; font-weight: 500;
+      margin-bottom: .85rem; display: none;
+    }
+    .gate-error.visible { display: block; }
+
+    /* ══ ATTENDANCE PANEL (shown after login) ══ */
+    .att-panel {
+      width: min(820px,100%);
+      display: none; flex-direction: column; gap: 1.25rem;
+    }
+    .att-panel.visible { display: flex; }
+
+    /* Action buttons */
+    .att-action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width:580px) { .att-action-grid { grid-template-columns: 1fr; } }
+    .att-action-btn {
+      background: var(--white); border-radius: var(--radius-xl);
+      padding: 2rem 1.5rem;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .75rem;
+      cursor: pointer; transition: all .2s; border: 2px solid transparent;
+      box-shadow: var(--shadow-sm);
+    }
+    .att-action-btn:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
+    .att-action-btn.time-in  { border-color: #22C55E; }
+    .att-action-btn.time-out { border-color: #F97316; }
+    .att-action-btn:hover.time-in  { background: #F0FDF4; }
+    .att-action-btn:hover.time-out { background: #FFF7ED; }
+    .att-action-icon { font-size: 2.5rem; }
+    .att-action-label { font-size: 1.1rem; font-weight: 800; color: var(--gray-800); }
+    .att-action-sub   { font-size: .8rem; color: var(--gray-400); }
+
+    /* OTP input panel */
+    .otp-input-panel {
+      background: var(--white); border-radius: var(--radius-xl);
+      padding: 2rem 2.25rem; box-shadow: var(--shadow-md);
+      display: none;
+    }
+    .otp-input-panel.visible { display: block; }
+    .otp-input-panel h3 { font-size: 1.1rem; font-weight: 800; color: var(--gray-800); margin-bottom: .3rem; }
+    .otp-input-panel p  { font-size: .85rem; color: var(--gray-400); margin-bottom: 1.5rem; }
+
+    .otp-digits {
+      display: flex; gap: .5rem; justify-content: center; margin-bottom: 1.5rem;
+    }
+    .otp-digit {
+      width: 52px; height: 64px;
+      border: 2px solid var(--gray-300); border-radius: var(--radius-md);
+      background: var(--gray-50);
+      font-size: 1.8rem; font-weight: 800; text-align: center;
+      color: var(--blue-800); font-family: monospace;
+      outline: none; transition: border-color .2s;
+    }
+    .otp-digit:focus { border-color: var(--blue-600); background: var(--white); box-shadow: 0 0 0 3px rgba(26,76,158,.1); }
+
+    .otp-submit {
+      width: 100%; padding: .85rem;
+      background: var(--blue-800); color: var(--white);
+      border: none; border-radius: var(--radius-sm);
+      font-family: var(--font-display); font-size: 1rem; font-weight: 700;
+      cursor: pointer; transition: all .2s;
+    }
+    .otp-submit:hover { background: var(--blue-700); transform: translateY(-1px); }
+
+    /* Today's attendance summary */
+    .today-summary {
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: var(--radius-lg);
+    }
+    .today-summary-header {
+      padding: .85rem 1.25rem;
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid rgba(255,255,255,.08);
+    }
+    .today-summary-header h3 { font-size: .88rem; font-weight: 700; color: var(--white); }
+    .live-badge { display: flex; align-items: center; gap: .35rem; font-size: .75rem; font-weight: 700; color: #4ADE80; }
+    .live-dot   { width: 7px; height: 7px; border-radius: 50%; background: #4ADE80; animation: livePulse 1.5s infinite; }
+    @keyframes livePulse { 0%,100%{opacity:1;transform:scale(1);} 50%{opacity:.4;transform:scale(.7);} }
+
+    /* Result modal */
+    .result-time  { font-size: 2.2rem; font-weight: 800; color: var(--blue-800); text-align: center; font-variant-numeric: tabular-nums; }
+    .result-label { text-align: center; color: var(--gray-500); font-size: .9rem; margin-top: .35rem; }
+  </style>
+</head>
+<body>
+
+<!-- ── Top Bar ── -->
+<div class="timein-topbar">
+  <div class="topbar-brand">
+    <div class="mark">{{ company_initials|default:"HR" }}</div>
+    <div>
+      <div class="name">{{ company_name|default:"Your Company" }}</div>
+      <div class="sub">Employee Attendance Portal</div>
+    </div>
+  </div>
+  <div style="color:rgba(255,255,255,.5);font-size:.8rem;">
+    Time-In / Time-Out Station
+  </div>
+</div>
+
+<!-- ── Date/Time Bar ── -->
+<div class="datetime-bar">
+  <div class="datetime-card">
+    <div class="dt-label">Today's Date</div>
+    <div class="dt-date" id="live-date">—</div>
+    <div class="dt-day"  id="live-day">—</div>
+  </div>
+  <div class="datetime-card center">
+    <div class="dt-label">Current Time</div>
+    <div class="dt-clock" id="live-clock">00:00:00</div>
+  </div>
+  <div class="datetime-card">
+    <div class="dt-label">Your Shift Today</div>
+    <div class="shift-cards" id="shift-display" style="margin-top:.5rem;">
+      <div class="shift-card">
+        <h4>1st Half</h4>
+        <div class="shift-row"><span style="font-size:.78rem;color:rgba(255,255,255,.5);">In:</span><span class="shift-time-in" id="half1-in">—</span></div>
+        <div class="shift-row"><span style="font-size:.78rem;color:rgba(255,255,255,.5);">Out:</span><span class="shift-time-out" id="half1-out">—</span></div>
+      </div>
+      <div class="shift-card">
+        <h4>2nd Half</h4>
+        <div class="shift-row"><span style="font-size:.78rem;color:rgba(255,255,255,.5);">In:</span><span class="shift-time-in" id="half2-in">—</span></div>
+        <div class="shift-row"><span style="font-size:.78rem;color:rgba(255,255,255,.5);">Out:</span><span class="shift-time-out" id="half2-out">—</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     GATE: Employee Login (shown when NOT authenticated)
+══════════════════════════════════════════════════════ -->
+<div class="login-gate" id="login-gate"
+     style="{% if employee_session %}display:none{% endif %}">
+  <div class="login-gate-left">
+    <div class="gate-icon">⏱</div>
+    <div class="gate-title">Attendance Portal</div>
+    <div class="gate-sub">Log in with your employee credentials to record your attendance for today.</div>
+  </div>
+  <div class="login-gate-right">
+    <h2>Employee Login</h2>
+    <p>Enter your username and password to access the time-in/out panel.</p>
+    <div class="gate-error" id="gate-error"></div>
+    <form onsubmit="employeeLogin(event)">
+      {% csrf_token %}
+      <div class="form-group" style="margin-bottom:.85rem;">
+        <label class="form-label">Username</label>
+        <input type="text" id="gate-username" class="form-control"
+               placeholder="Your system username" autocomplete="username" required>
+      </div>
+      <div class="form-group" style="margin-bottom:.85rem;">
+        <label class="form-label">Password</label>
+        <div style="position:relative;">
+          <input type="password" id="gate-password" class="form-control"
+                 placeholder="Your password" autocomplete="current-password"
+                 required style="padding-right:2.8rem;">
+          <button type="button"
+                  onclick="document.getElementById('gate-password').type = document.getElementById('gate-password').type === 'password' ? 'text' : 'password'"
+                  style="position:absolute;right:.7rem;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--gray-400);font-size:1rem;">
+            👁
+          </button>
+        </div>
+      </div>
+      <button type="submit" class="gate-submit">Sign In →</button>
+    </form>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     SESSION BAR + ATTENDANCE PANEL (shown after login)
+══════════════════════════════════════════════════════ -->
+
+<!-- Employee session bar -->
+<div class="emp-session-bar" id="emp-session-bar"
+     style="{% if not employee_session %}display:none{% endif %}">
+  <div class="ses-av" id="ses-av">—</div>
+  <div>
+    <div class="ses-name" id="ses-name">—</div>
+    <div class="ses-code" id="ses-code">—</div>
+  </div>
+  <button class="ses-logout" onclick="employeeLogout()">⏻ Sign Out</button>
+</div>
+
+<!-- Attendance panel -->
+<div class="att-panel" id="att-panel"
+     {% if employee_session %}style="display:flex"{% endif %}>
+
+  <!-- Action buttons -->
+  <div class="att-action-grid" id="action-grid">
+    <div class="att-action-btn time-in" onclick="selectAction('time_in')">
+      <div class="att-action-icon">⏱</div>
+      <div class="att-action-label">Time In</div>
+      <div class="att-action-sub">Record your arrival</div>
+    </div>
+    <div class="att-action-btn time-out" onclick="selectAction('time_out')">
+      <div class="att-action-icon">⏹</div>
+      <div class="att-action-label">Time Out</div>
+      <div class="att-action-sub">Record your departure</div>
+    </div>
+  </div>
+
+  <!-- OTP input panel (appears after selecting action) -->
+  <div class="otp-input-panel" id="otp-input-panel">
+    <h3 id="otp-panel-title">Enter OTP</h3>
+    <p>Enter the 6-digit OTP shown on the attendance screen by your HR admin.</p>
+
+    <!-- 6 individual digit boxes -->
+    <div class="otp-digits" id="otp-digits">
+      <input class="otp-digit" maxlength="1" inputmode="numeric" pattern="[0-9]"
+             oninput="otpDigitInput(this,0)" onkeydown="otpDigitKey(event,this,0)">
+      <input class="otp-digit" maxlength="1" inputmode="numeric" pattern="[0-9]"
+             oninput="otpDigitInput(this,1)" onkeydown="otpDigitKey(event,this,1)">
+      <input class="otp-digit" maxlength="1" inputmode="numeric" pattern="[0-9]"
+             oninput="otpDigitInput(this,2)" onkeydown="otpDigitKey(event,this,2)">
+      <input class="otp-digit" maxlength="1" inputmode="numeric" pattern="[0-9]"
+             oninput="otpDigitInput(this,3)" onkeydown="otpDigitKey(event,this,3)">
+      <input class="otp-digit" maxlength="1" inputmode="numeric" pattern="[0-9]"
+             oninput="otpDigitInput(this,4)" onkeydown="otpDigitKey(event,this,4)">
+      <input class="otp-digit" maxlength="1" inputmode="numeric" pattern="[0-9]"
+             oninput="otpDigitInput(this,5)" onkeydown="otpDigitKey(event,this,5)">
+    </div>
+
+    <button class="otp-submit" onclick="submitOTP()">Log Attendance →</button>
+    <button style="width:100%;margin-top:.65rem;padding:.55rem;background:none;border:none;color:var(--gray-400);font-family:var(--font-display);font-size:.85rem;cursor:pointer;"
+            onclick="cancelOTP()">← Go Back</button>
+  </div>
+
+  <!-- Today's attendance summary -->
+  <div class="today-summary">
+    <div class="today-summary-header">
+      <h3>Your Attendance Today</h3>
+      <div class="live-badge"><div class="live-dot"></div> Live</div>
+    </div>
+    <div style="padding:1rem 1.25rem;">
+      <div class="shift-cards">
+        <div class="shift-card">
+          <h4>1st Half</h4>
+          <div class="shift-row"><span style="font-size:.78rem;color:rgba(255,255,255,.5);">In:</span><span class="shift-time-in" id="panel-half1-in">—</span></div>
+          <div class="shift-row"><span style="font-size:.78rem;color:rgba(255,255,255,.5);">Out:</span><span class="shift-time-out" id="panel-half1-out">—</span></div>
+        </div>
+        <div class="shift-card">
+          <h4>2nd Half</h4>
+          <div class="shift-row"><span style="font-size:.78rem;color:rgba(255,255,255,.5);">In:</span><span class="shift-time-in" id="panel-half2-in">—</span></div>
+          <div class="shift-row"><span style="font-size:.78rem;color:rgba(255,255,255,.5);">Out:</span><span class="shift-time-out" id="panel-half2-out">—</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Result Modal -->
+<div class="modal-backdrop" id="result-modal">
+  <div class="modal" style="max-width:400px;">
+    <div class="modal-header">
+      <h2 id="result-title">Attendance Logged</h2>
+      <button class="btn-close" onclick="closeModal('result-modal')">✕</button>
+    </div>
+    <div class="modal-body" style="text-align:center;padding:2.5rem 2rem;">
+      <div style="font-size:3.5rem;margin-bottom:.85rem;" id="result-icon">✅</div>
+      <div class="result-time" id="result-time"></div>
+      <div class="result-label" id="result-label"></div>
+      <div style="margin-top:1.25rem;padding:.9rem;background:var(--blue-50);border-radius:var(--radius-md);font-size:.84rem;color:var(--gray-700);" id="result-details"></div>
+    </div>
+    <div class="modal-footer" style="justify-content:center;">
+      <button class="btn btn-primary" onclick="closeModal('result-modal')">Done</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div class="toast-container" id="toast-container"></div>
+<script src="{% static 'js/base.js' %}"></script>
+
+<script>
+  // ── State ─────────────────────────────────────────────────────────────────
+  let currentEmployee = null;   // set after successful employee login
+  let currentAction   = null;   // 'time_in' or 'time_out'
+
+  // Pre-populate from server session if already logged in
+  {% if employee_session %}
+  currentEmployee = {
+    id:       {{ employee_session.id }},
+    name:     "{{ employee_session.name|escapejs }}",
+    code:     "{{ employee_session.code|escapejs }}",
+    initials: "{{ employee_session.initials|escapejs }}",
+    today:    {{ employee_session.today|safe }},
+  };
+  renderSessionBar();
+  renderTodayShifts(currentEmployee.today);
+  {% endif %}
+
+  // ── Live clock ─────────────────────────────────────────────────────────────
+  const DAYS   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function updateClock() {
+    const now = new Date();
+    document.getElementById('live-clock').textContent =
+      String(now.getHours()).padStart(2,'0') + ':' +
+      String(now.getMinutes()).padStart(2,'0') + ':' +
+      String(now.getSeconds()).padStart(2,'0');
+    document.getElementById('live-date').textContent =
+      MONTHS[now.getMonth()] + ' ' + now.getDate() + ', ' + now.getFullYear();
+    document.getElementById('live-day').textContent = DAYS[now.getDay()];
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // ── Employee Login ─────────────────────────────────────────────────────────
+  async function employeeLogin(e) {
+    e.preventDefault();
+    const username = document.getElementById('gate-username').value.trim();
+    const password = document.getElementById('gate-password').value;
+    const errEl    = document.getElementById('gate-error');
+    errEl.classList.remove('visible');
+
+    try {
+      const res = await apiPost("{% url 'attendance:employee_login' %}", { username, password });
+      if (res.success) {
+        currentEmployee = res.employee;
+        // Show session bar + attendance panel, hide gate
+        document.getElementById('login-gate').style.display      = 'none';
+        document.getElementById('emp-session-bar').style.display = 'flex';
+        document.getElementById('att-panel').style.display       = 'flex';
+        renderSessionBar();
+        renderTodayShifts(res.employee.today);
+      } else {
+        errEl.textContent = res.message || 'Invalid username or password.';
+        errEl.classList.add('visible');
+        // Shake the form
+        document.getElementById('gate-error').scrollIntoView({ behavior: 'smooth' });
+      }
+    } catch {
+      errEl.textContent = 'Server error. Please try again.';
+      errEl.classList.add('visible');
+    }
+  }
+
+  // ── Render session bar ─────────────────────────────────────────────────────
+  function renderSessionBar() {
+    if (!currentEmployee) return;
+    const initials = currentEmployee.initials ||
+      (currentEmployee.name.split(' ').map(n => n[0]).join('').slice(0,2).toUpperCase());
+    document.getElementById('ses-av').textContent   = initials;
+    document.getElementById('ses-name').textContent = currentEmployee.name;
+    document.getElementById('ses-code').textContent = currentEmployee.code;
+  }
+
+  // ── Render today's shift times ─────────────────────────────────────────────
+  function renderTodayShifts(today) {
+    if (!today) return;
+    ['half1-in','half1-out','half2-in','half2-out'].forEach(id => {
+      const key = id.replace('-','_').replace('half','half');
+      const keyMap = {
+        'half1-in':  'time_in_am',
+        'half1-out': 'time_out_am',
+        'half2-in':  'time_in_pm',
+        'half2-out': 'time_out_pm',
+      };
+      const val = today[keyMap[id]] || '—';
+      document.getElementById(id).textContent           = val;
+      document.getElementById('panel-' + id).textContent = val;
+    });
+  }
+
+  // ── Employee Logout ────────────────────────────────────────────────────────
+  async function employeeLogout() {
+    await apiPost("{% url 'attendance:employee_logout' %}", {});
+    currentEmployee = null;
+    currentAction   = null;
+    document.getElementById('emp-session-bar').style.display = 'none';
+    document.getElementById('att-panel').style.display       = 'none';
+    document.getElementById('login-gate').style.display      = 'grid';
+    document.getElementById('gate-username').value           = '';
+    document.getElementById('gate-password').value           = '';
+    cancelOTP();
+  }
+
+  // ── Select time-in or time-out ─────────────────────────────────────────────
+  function selectAction(action) {
+    currentAction = action;
+    document.getElementById('action-grid').style.display     = 'none';
+    document.getElementById('otp-input-panel').classList.add('visible');
+    document.getElementById('otp-panel-title').textContent   =
+      action === 'time_in' ? '⏱ Enter OTP to Time In' : '⏹ Enter OTP to Time Out';
+    // Focus first digit
+    document.querySelector('.otp-digit').focus();
+  }
+
+  function cancelOTP() {
+    currentAction = null;
+    document.getElementById('otp-input-panel').classList.remove('visible');
+    document.getElementById('action-grid').style.display = 'grid';
+    document.querySelectorAll('.otp-digit').forEach(d => d.value = '');
+  }
+
+  // ── OTP digit inputs ───────────────────────────────────────────────────────
+  const digits = () => Array.from(document.querySelectorAll('.otp-digit'));
+
+  function otpDigitInput(el, idx) {
+    el.value = el.value.replace(/\D/g,'').slice(-1);
+    if (el.value && idx < 5) digits()[idx + 1].focus();
+    // Auto-submit when all 6 filled
+    if (digits().every(d => d.value)) submitOTP();
+  }
+
+  function otpDigitKey(e, el, idx) {
+    if (e.key === 'Backspace' && !el.value && idx > 0) {
+      digits()[idx - 1].focus();
+    }
+    if (e.key === 'ArrowLeft'  && idx > 0) digits()[idx - 1].focus();
+    if (e.key === 'ArrowRight' && idx < 5) digits()[idx + 1].focus();
+  }
+
+  function getOTPValue() {
+    return digits().map(d => d.value).join('');
+  }
+
+  // ── Submit OTP ─────────────────────────────────────────────────────────────
+  async function submitOTP() {
+    const otp = getOTPValue();
+    if (otp.length !== 6) {
+      showToast('Please enter all 6 digits.', 'error');
+      return;
+    }
+    if (!currentEmployee || !currentAction) {
+      showToast('Session error. Please sign in again.', 'error');
+      return;
+    }
+
+    try {
+      const res = await apiPost("{% url 'attendance:log_attendance' %}", {
+        username: null,           // no longer needed — server uses session
+        otp:      otp,
+        action:   currentAction,
+        employee_id: currentEmployee.id,  // passed explicitly since employee is already authed
+      });
+
+      if (res.success) {
+        const now     = new Date();
+        const timeStr = String(now.getHours()).padStart(2,'0') + ':' + String(now.getMinutes()).padStart(2,'0');
+
+        // Update shift display
+        const keyMap = {
+          time_in:  res.half === 'am' ? 'half1-in'  : 'half2-in',
+          time_out: res.half === 'am' ? 'half1-out' : 'half2-out',
+        };
+        document.getElementById(keyMap[currentAction]).textContent             = timeStr;
+        document.getElementById('panel-' + keyMap[currentAction]).textContent  = timeStr;
+
+        // Show result modal
+        document.getElementById('result-icon').textContent  = currentAction === 'time_in' ? '✅' : '👋';
+        document.getElementById('result-title').textContent = currentAction === 'time_in' ? 'Time-In Recorded!' : 'Time-Out Recorded!';
+        document.getElementById('result-time').textContent  = timeStr;
+        document.getElementById('result-label').textContent = (currentAction === 'time_in' ? 'Time-In' : 'Time-Out') + ' logged successfully';
+        document.getElementById('result-details').innerHTML =
+          `<strong>Employee:</strong> ${currentEmployee.name}<br>
+           <strong>Date:</strong> ${document.getElementById('live-date').textContent}<br>
+           <strong>Half:</strong> ${res.half === 'am' ? '1st Half (AM)' : '2nd Half (PM)'}`;
+        openModal('result-modal');
+
+        // Reset
+        cancelOTP();
+      } else {
+        // Flash digits red
+        digits().forEach(d => { d.style.borderColor = 'var(--danger)'; d.style.background = '#FFF5F5'; });
+        setTimeout(() => digits().forEach(d => { d.style.borderColor = ''; d.style.background = ''; }), 1200);
+        digits().forEach(d => d.value = '');
+        digits()[0].focus();
+        showToast(res.message || 'Invalid or expired OTP.', 'error');
+      }
+    } catch {
+      showToast('Server error. Please try again.', 'error');
+    }
+  }
+</script>
+</body>
+</html>

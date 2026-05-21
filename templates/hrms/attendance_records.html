@@ -1,0 +1,318 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Attendance Records{% endblock %}
+{% block page_title %}Attendance Records{% endblock %}
+{% block breadcrumb %}Attendance › All Records{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-gold btn-sm" onclick="openModal('manual-att-modal')">+ Manual Entry</button>
+  <button class="btn btn-outline btn-sm" style="color:var(--white);border-color:rgba(255,255,255,.4);"
+          onclick="exportRecords()">⬇ Export CSV</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .filter-card {
+    background:var(--white); border:1px solid var(--gray-200);
+    border-radius:var(--radius-lg); padding:1rem 1.25rem;
+    display:flex; flex-wrap:wrap; gap:.75rem; align-items:flex-end;
+    margin-bottom:1.25rem;
+  }
+  .filter-card .form-group { flex:1; min-width:140px; }
+  .filter-card .form-group label { font-size:.72rem; font-weight:700; text-transform:uppercase; letter-spacing:.06em; color:var(--gray-500); display:block; margin-bottom:.3rem; }
+
+  /* Summary mini-stats */
+  .att-mini-stats { display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1.25rem; }
+  .mini-stat {
+    background:var(--white); border:1px solid var(--gray-200);
+    border-radius:var(--radius-md); padding:.65rem 1rem;
+    display:flex; align-items:center; gap:.6rem; flex:1; min-width:120px;
+  }
+  .mini-stat .num   { font-size:1.25rem; font-weight:800; }
+  .mini-stat .label { font-size:.72rem; color:var(--gray-500); font-weight:500; }
+
+  .emp-cell { display:flex; align-items:center; gap:.6rem; }
+  .emp-av-sm {
+    width:30px; height:30px; border-radius:50%; flex-shrink:0;
+    background:var(--blue-800); color:var(--white);
+    display:flex; align-items:center; justify-content:center;
+    font-size:.7rem; font-weight:700;
+  }
+
+  /* Edit inline row highlight */
+  tr.editing-row { background:var(--gold-100) !important; }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Filters ── -->
+<div class="filter-card">
+  <form method="get" action="{% url 'attendance:records' %}" style="display:contents;">
+    <div class="form-group" style="flex:2;min-width:200px;">
+      <label>Employee</label>
+      <select name="emp_id" class="form-control">
+        <option value="">All Employees</option>
+        {% for emp in employees %}
+        <option value="{{ emp.id }}" {% if request.GET.emp_id == emp.id|stringformat:'s' %}selected{% endif %}>
+          {{ emp.last_name }}, {{ emp.first_name }} ({{ emp.employee_code }})
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>From Date</label>
+      <input type="date" name="from" class="form-control" value="{{ request.GET.from }}">
+    </div>
+    <div class="form-group">
+      <label>To Date</label>
+      <input type="date" name="to" class="form-control" value="{{ request.GET.to }}">
+    </div>
+    <div class="form-group">
+      <label>Status</label>
+      <select name="status" class="form-control">
+        <option value="">All</option>
+        <option value="present"  {% if request.GET.status == 'present' %}selected{% endif %}>Present</option>
+        <option value="late"     {% if request.GET.status == 'late' %}selected{% endif %}>Late</option>
+        <option value="absent"   {% if request.GET.status == 'absent' %}selected{% endif %}>Absent</option>
+      </select>
+    </div>
+    <div style="display:flex;gap:.4rem;align-items:flex-end;">
+      <button type="submit" class="btn btn-primary btn-sm">🔍 Filter</button>
+      <a href="{% url 'attendance:records' %}" class="btn btn-outline btn-sm">Clear</a>
+    </div>
+  </form>
+</div>
+
+<!-- ── Mini Stats ── -->
+<div class="att-mini-stats">
+  <div class="mini-stat">
+    <div style="width:32px;height:32px;background:#DCFCE7;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;">✅</div>
+    <div><div class="num" style="color:var(--success);">{{ summary.present }}</div><div class="label">Present</div></div>
+  </div>
+  <div class="mini-stat">
+    <div style="width:32px;height:32px;background:#FEE2E2;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;">🚫</div>
+    <div><div class="num" style="color:var(--danger);">{{ summary.absent }}</div><div class="label">Absent</div></div>
+  </div>
+  <div class="mini-stat">
+    <div style="width:32px;height:32px;background:#FEF3C7;border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;">⏰</div>
+    <div><div class="num" style="color:var(--warning);">{{ summary.late }}</div><div class="label">Late</div></div>
+  </div>
+  <div class="mini-stat">
+    <div style="width:32px;height:32px;background:var(--blue-100);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;">📋</div>
+    <div><div class="num" style="color:var(--blue-800);">{{ summary.total }}</div><div class="label">Total Records</div></div>
+  </div>
+</div>
+
+<!-- ── Records Table ── -->
+<div class="card">
+  <div class="card-header">
+    <h3>Attendance Records</h3>
+    <span class="text-sm text-gray">{{ records.paginator.count }} record{{ records.paginator.count|pluralize }}</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table" id="records-table">
+      <thead>
+        <tr>
+          <th>Employee</th>
+          <th>Date</th>
+          <th>1st Half In</th>
+          <th>1st Half Out</th>
+          <th>2nd Half In</th>
+          <th>2nd Half Out</th>
+          <th style="text-align:right;">Hours</th>
+          <th style="text-align:right;">Late (min)</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for rec in records %}
+        <tr id="row-{{ rec.id }}">
+          <td>
+            <div class="emp-cell">
+              <div class="emp-av-sm">{{ rec.employee.first_name|slice:":1" }}{{ rec.employee.last_name|slice:":1" }}</div>
+              <div>
+                <strong style="font-size:.85rem;">{{ rec.employee.last_name }}, {{ rec.employee.first_name }}</strong>
+                <div style="font-size:.72rem;color:var(--gray-400);">{{ rec.employee.employee_code }}</div>
+              </div>
+            </div>
+          </td>
+          <td>{{ rec.date|date:"M d, Y" }}
+            <div style="font-size:.72rem;color:var(--gray-400);">{{ rec.date|date:"D" }}</div>
+          </td>
+          <td>{{ rec.time_in_am|default:"—" }}</td>
+          <td>{{ rec.time_out_am|default:"—" }}</td>
+          <td>{{ rec.time_in_pm|default:"—" }}</td>
+          <td>{{ rec.time_out_pm|default:"—" }}</td>
+          <td style="text-align:right;">{{ rec.total_hours|default:"—" }}</td>
+          <td style="text-align:right;">
+            {% if rec.late_minutes %}
+              <span style="color:var(--warning);font-weight:600;">{{ rec.late_minutes }}</span>
+            {% else %}0{% endif %}
+          </td>
+          <td>
+            <span class="badge {% if rec.status == 'present' %}badge-success{% elif rec.status == 'late' %}badge-warning{% else %}badge-danger{% endif %}">
+              {{ rec.status|title }}
+            </span>
+          </td>
+          <td>
+            <button class="btn btn-outline btn-sm" onclick="editRecord({{ rec.id }})">✏ Edit</button>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="10" style="text-align:center;padding:3rem;color:var(--gray-400);">
+            No records found for the selected filters.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  <div style="padding:1rem 1.5rem;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--gray-200);">
+    <span class="text-sm text-gray">Page {{ records.number }} of {{ records.paginator.num_pages }}</span>
+    <div class="pagination">
+      {% if records.has_previous %}
+        <a href="?{% if request.GET.emp_id %}emp_id={{ request.GET.emp_id }}&{% endif %}{% if request.GET.from %}from={{ request.GET.from }}&{% endif %}{% if request.GET.to %}to={{ request.GET.to }}&{% endif %}{% if request.GET.status %}status={{ request.GET.status }}&{% endif %}page={{ records.previous_page_number }}" class="page-btn">‹</a>
+      {% endif %}
+      {% for num in records.paginator.page_range %}
+        {% if records.number == num %}
+          <span class="page-btn active">{{ num }}</span>
+        {% elif num >= records.number|add:"-2" and num <= records.number|add:"2" %}
+          <a href="?{% if request.GET.emp_id %}emp_id={{ request.GET.emp_id }}&{% endif %}page={{ num }}" class="page-btn">{{ num }}</a>
+        {% endif %}
+      {% endfor %}
+      {% if records.has_next %}
+        <a href="?{% if request.GET.emp_id %}emp_id={{ request.GET.emp_id }}&{% endif %}page={{ records.next_page_number }}" class="page-btn">›</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ══ EDIT RECORD MODAL ══ -->
+<div class="modal-backdrop" id="edit-att-modal">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-header">
+      <h2>Edit Attendance Record</h2>
+      <button class="btn-close" onclick="closeModal('edit-att-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="edit-att-form" method="post" action="{% url 'attendance:update' pk=0 %}">
+        {% csrf_token %}
+        <div style="background:var(--blue-50);border-radius:var(--radius-sm);padding:.65rem .9rem;font-size:.84rem;color:var(--blue-800);margin-bottom:1rem;">
+          Editing: <strong id="edit-emp-name"></strong> — <strong id="edit-date"></strong>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.85rem;margin-bottom:.85rem;">
+          <div class="form-group">
+            <label class="form-label">1st Half Time In</label>
+            <input type="time" name="time_in_am" id="edit-in-am" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label">1st Half Time Out</label>
+            <input type="time" name="time_out_am" id="edit-out-am" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label">2nd Half Time In</label>
+            <input type="time" name="time_in_pm" id="edit-in-pm" class="form-control">
+          </div>
+          <div class="form-group">
+            <label class="form-label">2nd Half Time Out</label>
+            <input type="time" name="time_out_pm" id="edit-out-pm" class="form-control">
+          </div>
+        </div>
+        <div class="form-group" style="margin-bottom:.85rem;">
+          <label class="form-label">Status</label>
+          <select name="status" id="edit-status" class="form-control">
+            <option value="present">Present</option>
+            <option value="late">Late</option>
+            <option value="absent">Absent</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Admin Notes</label>
+          <textarea name="notes" class="form-control" rows="2" placeholder="Optional notes…"></textarea>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('edit-att-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitEditAtt()">💾 Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- Manual Entry Modal (reused) -->
+<div class="modal-backdrop" id="manual-att-modal">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-header"><h2>Manual Attendance Entry</h2><button class="btn-close" onclick="closeModal('manual-att-modal')">✕</button></div>
+    <div class="modal-body">
+      <form id="manual-form" method="post" action="{% url 'attendance:manual_entry' %}">
+        {% csrf_token %}
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.85rem;">
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">Employee <span style="color:var(--danger)">*</span></label>
+            <select name="employee_id" class="form-control" required>
+              <option value="">Select employee…</option>
+              {% for emp in employees %}
+              <option value="{{ emp.id }}">{{ emp.last_name }}, {{ emp.first_name }} ({{ emp.employee_code }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">Date <span style="color:var(--danger)">*</span></label>
+            <input type="date" name="date" class="form-control" required>
+          </div>
+          <div class="form-group"><label class="form-label">1st Half In</label><input type="time" name="time_in_am" class="form-control"></div>
+          <div class="form-group"><label class="form-label">1st Half Out</label><input type="time" name="time_out_am" class="form-control"></div>
+          <div class="form-group"><label class="form-label">2nd Half In</label><input type="time" name="time_in_pm" class="form-control"></div>
+          <div class="form-group"><label class="form-label">2nd Half Out</label><input type="time" name="time_out_pm" class="form-control"></div>
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-control">
+              <option value="present">Present</option>
+              <option value="late">Late</option>
+              <option value="absent">Absent</option>
+            </select>
+          </div>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('manual-att-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="document.getElementById('manual-form').submit()">💾 Save Entry</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Record data injected by Django for edit pre-population
+  const recordData = {{ records_json|safe|default:"{}" }};
+
+  function editRecord(id) {
+    const rec = recordData[id];
+    if (!rec) { showToast('Record data unavailable.','error'); return; }
+    document.getElementById('edit-emp-name').textContent = rec.employee_name;
+    document.getElementById('edit-date').textContent     = rec.date;
+    document.getElementById('edit-in-am').value  = rec.time_in_am  || '';
+    document.getElementById('edit-out-am').value = rec.time_out_am || '';
+    document.getElementById('edit-in-pm').value  = rec.time_in_pm  || '';
+    document.getElementById('edit-out-pm').value = rec.time_out_pm || '';
+    document.getElementById('edit-status').value = rec.status || 'present';
+    document.getElementById('edit-att-form').action = `/attendance/admin/${id}/update/`;
+    openModal('edit-att-modal');
+  }
+
+  function submitEditAtt() {
+    document.getElementById('edit-att-form').submit();
+  }
+
+  function exportRecords() {
+    const params = new URLSearchParams(window.location.search);
+    window.location.href = "{% url 'attendance:export' %}?" + params.toString();
+  }
+</script>
+{% endblock %}

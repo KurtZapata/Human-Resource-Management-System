@@ -1,0 +1,482 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Adjustments{% endblock %}
+{% block page_title %}Payroll Adjustments{% endblock %}
+{% block breadcrumb %}Payroll › Adjustments{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-gold btn-sm" onclick="openModal('add-adj-modal')">+ Add Adjustment</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .adj-filter-bar {
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-lg); padding: .9rem 1.25rem;
+    display: flex; flex-wrap: wrap; gap: .75rem; align-items: flex-end;
+    margin-bottom: 1.25rem;
+  }
+  .adj-filter-bar .form-group { flex: 1; min-width: 130px; }
+  .adj-filter-bar .form-group label { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--gray-500); display: block; margin-bottom: .3rem; }
+
+  .type-pill {
+    display: inline-flex; align-items: center; gap: .3rem;
+    padding: .2rem .6rem; border-radius: 4px; font-size: .75rem; font-weight: 700;
+  }
+  .type-pill.overtime { background: #FEF3C7; color: #B45309; }
+  .type-pill.leave    { background: #F3E8FF; color: #7E22CE; }
+
+  .emp-cell { display: flex; align-items: center; gap: .6rem; }
+  .emp-av-sm {
+    width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+    background: var(--blue-800); color: var(--white);
+    display: flex; align-items: center; justify-content: center;
+    font-size: .7rem; font-weight: 700;
+  }
+
+  /* Leave type selector with color dot */
+  .leave-type-opt { display: flex; align-items: center; gap: .5rem; }
+
+  /* Totals bar */
+  .adj-totals {
+    display: flex; gap: 1.25rem; flex-wrap: wrap;
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-lg); padding: 1rem 1.5rem; margin-bottom: 1.25rem;
+    align-items: center;
+  }
+  .adj-total-item { display: flex; flex-direction: column; }
+  .adj-total-item .label { font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--gray-400); }
+  .adj-total-item .val   { font-size: 1.1rem; font-weight: 800; color: var(--gray-800); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Summary Totals ── -->
+<div class="adj-totals">
+  <div class="adj-total-item">
+    <span class="label">Total Adjustments</span>
+    <span class="val">{{ adjustments.paginator.count }}</span>
+  </div>
+  <div style="width:1px;height:36px;background:var(--gray-200);"></div>
+  <div class="adj-total-item">
+    <span class="label">Overtime Records</span>
+    <span class="val" style="color:#B45309;">{{ summary.overtime_count }}</span>
+  </div>
+  <div class="adj-total-item">
+    <span class="label">Total OT Hours</span>
+    <span class="val" style="color:#B45309;">{{ summary.total_ot_hours|floatformat:"1" }}h</span>
+  </div>
+  <div style="width:1px;height:36px;background:var(--gray-200);"></div>
+  <div class="adj-total-item">
+    <span class="label">Leave Records</span>
+    <span class="val" style="color:#7E22CE;">{{ summary.leave_count }}</span>
+  </div>
+  <div class="adj-total-item">
+    <span class="label">Total Leave Days</span>
+    <span class="val" style="color:#7E22CE;">{{ summary.total_leave_days|floatformat:"1" }}</span>
+  </div>
+  <div style="width:1px;height:36px;background:var(--gray-200);"></div>
+  <div class="adj-total-item">
+    <span class="label">Net Adjustment Amount</span>
+    <span class="val" style="color:var(--blue-800);">₱{{ summary.total_amount|floatformat:"2" }}</span>
+  </div>
+</div>
+
+<!-- ── Filters ── -->
+<div class="adj-filter-bar">
+  <form method="get" action="{% url 'payroll:adjustments' %}" style="display:contents;">
+    <div class="form-group" style="flex:2;min-width:200px;">
+      <label>Employee</label>
+      <select name="emp_id" class="form-control">
+        <option value="">All Employees</option>
+        {% for emp in employees %}
+        <option value="{{ emp.id }}" {% if request.GET.emp_id == emp.id|stringformat:'s' %}selected{% endif %}>
+          {{ emp.last_name }}, {{ emp.first_name }} ({{ emp.employee_code }})
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Type</label>
+      <select name="type" class="form-control">
+        <option value="">All Types</option>
+        <option value="overtime" {% if request.GET.type == 'overtime' %}selected{% endif %}>Overtime</option>
+        <option value="leave"    {% if request.GET.type == 'leave' %}selected{% endif %}>Leave</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Payroll Period</label>
+      <select name="period_id" class="form-control">
+        <option value="">All Periods</option>
+        {% for p in payroll_periods %}
+        <option value="{{ p.id }}" {% if request.GET.period_id == p.id|stringformat:'s' %}selected{% endif %}>
+          {{ p.start_date|date:"M d" }} – {{ p.end_date|date:"M d, Y" }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="display:flex;gap:.4rem;align-items:flex-end;">
+      <button type="submit" class="btn btn-primary btn-sm">🔍 Filter</button>
+      <a href="{% url 'payroll:adjustments' %}" class="btn btn-outline btn-sm">Clear</a>
+    </div>
+  </form>
+</div>
+
+<!-- ── Adjustments Table ── -->
+<div class="card">
+  <div class="card-header">
+    <h3>Adjustment Records</h3>
+    <span class="text-sm text-gray">{{ adjustments.paginator.count }} record{{ adjustments.paginator.count|pluralize }}</span>
+  </div>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Employee</th>
+          <th>Period</th>
+          <th>Type</th>
+          <th>Leave Type</th>
+          <th style="text-align:right;">Hours / Days</th>
+          <th style="text-align:right;">Rate (₱/hr)</th>
+          <th style="text-align:right;">Amount (₱)</th>
+          <th>Description</th>
+          <th>Created By</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for adj in adjustments %}
+        <tr>
+          <td>
+            <div class="emp-cell">
+              <div class="emp-av-sm">{{ adj.employee.first_name|slice:":1" }}{{ adj.employee.last_name|slice:":1" }}</div>
+              <div>
+                <strong style="font-size:.85rem;">{{ adj.employee.last_name }}, {{ adj.employee.first_name }}</strong>
+                <div style="font-size:.72rem;color:var(--gray-400);">{{ adj.employee.employee_code }}</div>
+              </div>
+            </div>
+          </td>
+          <td style="font-size:.8rem;">
+            {{ adj.payroll_period.start_date|date:"M d" }} – {{ adj.payroll_period.end_date|date:"M d, Y" }}
+          </td>
+          <td>
+            <span class="type-pill {{ adj.type }}">
+              {% if adj.type == 'overtime' %}⏰ Overtime{% else %}🏖 Leave{% endif %}
+            </span>
+          </td>
+          <td>
+            {% if adj.leave_type_id %}
+              {% for lt in leave_types %}{% if lt.id == adj.leave_type_id %}
+                <span class="badge badge-info" style="font-size:.72rem;">{{ lt.name }}</span>
+              {% endif %}{% endfor %}
+            {% else %}—{% endif %}
+          </td>
+          <td style="text-align:right;font-weight:700;">{{ adj.hours|floatformat:"1" }}</td>
+          <td style="text-align:right;">{{ adj.rate|floatformat:"2" }}</td>
+          <td style="text-align:right;font-weight:700;
+            {% if adj.amount >= 0 %}color:var(--success);{% else %}color:var(--danger);{% endif %}">
+            {% if adj.amount >= 0 %}+{% endif %}₱{{ adj.amount|floatformat:"2" }}
+          </td>
+          <td style="font-size:.8rem;max-width:160px;color:var(--gray-500);">
+            {{ adj.description|truncatechars:50|default:"—" }}
+          </td>
+          <td style="font-size:.78rem;color:var(--gray-400);">
+            {{ adj.created_by.username|default:"System" }}
+            <div>{{ adj.created_at|date:"M d, Y" }}</div>
+          </td>
+          <td>
+            <div style="display:flex;gap:.3rem;">
+              <button class="btn btn-outline btn-sm btn-icon"
+                      onclick="editAdj({{ adj.id }}, '{{ adj.type }}', {{ adj.employee_id }}, {{ adj.payroll_period_id }}, {{ adj.hours }}, {{ adj.rate }}, {{ adj.amount }}, '{{ adj.description|escapejs }}', {{ adj.leave_type_id|default:'null' }})">
+                ✏
+              </button>
+              <button class="btn btn-danger btn-sm btn-icon"
+                      onclick="deleteAdj({{ adj.id }})">🗑</button>
+            </div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="10" style="text-align:center;padding:3rem;color:var(--gray-400);">
+            <div style="font-size:2.5rem;margin-bottom:.75rem;">📋</div>
+            No adjustments found for the selected filters.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  <div style="padding:1rem 1.5rem;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--gray-200);">
+    <span class="text-sm text-gray">Page {{ adjustments.number }} of {{ adjustments.paginator.num_pages }}</span>
+    <div class="pagination">
+      {% if adjustments.has_previous %}
+        <a href="?page={{ adjustments.previous_page_number }}" class="page-btn">‹</a>
+      {% endif %}
+      {% for num in adjustments.paginator.page_range %}
+        {% if adjustments.number == num %}
+          <span class="page-btn active">{{ num }}</span>
+        {% elif num >= adjustments.number|add:"-2" and num <= adjustments.number|add:"2" %}
+          <a href="?page={{ num }}" class="page-btn">{{ num }}</a>
+        {% endif %}
+      {% endfor %}
+      {% if adjustments.has_next %}
+        <a href="?page={{ adjustments.next_page_number }}" class="page-btn">›</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- ══ ADD / EDIT ADJUSTMENT MODAL ══ -->
+<div class="modal-backdrop" id="add-adj-modal">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-header">
+      <h2 id="adj-modal-title">Add Adjustment</h2>
+      <button class="btn-close" onclick="closeModal('add-adj-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="adj-form" method="post" action="{% url 'payroll:adjustments' %}">
+        {% csrf_token %}
+        <input type="hidden" name="action"  id="adj-action" value="create">
+        <input type="hidden" name="adj_id"  id="adj-id-input">
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.9rem;">
+
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">Employee <span style="color:var(--danger)">*</span></label>
+            <select name="employee_id" id="adj-employee" class="form-control" required
+                    onchange="loadEmployeeOTRate()">
+              <option value="">Select employee…</option>
+              {% for emp in employees %}
+              <option value="{{ emp.id }}"
+                      data-ot-rate="{{ emp.salary_grade.overtime_rate|default:'0' }}"
+                      data-hourly="{{ emp.salary_grade.hourly_rate|default:'0' }}">
+                {{ emp.last_name }}, {{ emp.first_name }} ({{ emp.employee_code }})
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">Payroll Period <span style="color:var(--danger)">*</span></label>
+            <select name="payroll_period_id" id="adj-period" class="form-control" required>
+              <option value="">Select period…</option>
+              {% for p in payroll_periods %}
+              <option value="{{ p.id }}">
+                {{ p.start_date|date:"M d" }} – {{ p.end_date|date:"M d, Y" }} ({{ p.status|title }})
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">Type <span style="color:var(--danger)">*</span></label>
+            <select name="type" id="adj-type" class="form-control" required
+                    onchange="onAdjTypeChange()">
+              <option value="overtime">⏰ Overtime</option>
+              <option value="leave">🏖 Leave</option>
+            </select>
+          </div>
+
+          <!-- Leave Type (visible for leave only) -->
+          <div class="form-group" id="leave-type-wrap" style="display:none;grid-column:1/-1;">
+            <label class="form-label">Leave Type</label>
+            <select name="leave_type_id" id="adj-leave-type" class="form-control">
+              <option value="">Select leave type…</option>
+              {% for lt in leave_types %}
+              <option value="{{ lt.id }}">
+                {{ lt.name }} ({% if lt.is_paid %}Paid{% else %}Unpaid{% endif %})
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <!-- Hours (overtime only) -->
+          <div class="form-group" id="hours-wrap">
+            <label class="form-label" id="hours-label">
+              OT Hours <span style="color:var(--danger)">*</span>
+            </label>
+            <input type="number" name="hours" id="adj-hours" class="form-control"
+                   step="0.5" min="0" placeholder="e.g. 2.5"
+                   oninput="recalcOTAmount()">
+          </div>
+
+          <!-- OT Rate display (read-only, auto-loaded from employee) -->
+          <div class="form-group" id="ot-rate-wrap">
+            <label class="form-label">OT Rate (₱/hr)</label>
+            <input type="text" id="adj-ot-rate-display" class="form-control"
+                   readonly style="background:var(--gray-50);color:var(--gray-500);"
+                   placeholder="Auto-loaded from employee grade">
+          </div>
+
+          <!-- Amount -->
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label" id="amount-label">
+              Amount (₱)
+              <span style="font-size:.72rem;color:var(--gray-400);font-weight:400;" id="amount-hint">
+                — auto-computed from hours × OT rate
+              </span>
+            </label>
+            <input type="number" name="amount" id="adj-amount" class="form-control"
+                   step="0.01" placeholder="0.00"
+                   id="adj-amount-field">
+            <!-- OT amount is read-only (computed), Leave amount is editable -->
+            <div style="font-size:.75rem;margin-top:.35rem;" id="amount-note"></div>
+          </div>
+
+          <div class="form-group" style="grid-column:1/-1;">
+            <label class="form-label">Description / Reason</label>
+            <textarea name="description" id="adj-desc" class="form-control" rows="2"
+                      placeholder="e.g. Overtime on March 15 due to system migration…"></textarea>
+          </div>
+
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('add-adj-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="document.getElementById('adj-form').submit()">💾 Save Adjustment</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Confirm Modal -->
+<div class="modal-backdrop" id="del-adj-modal">
+  <div class="modal" style="max-width:360px;">
+    <div class="modal-header"><h2>Delete Adjustment</h2><button class="btn-close" onclick="closeModal('del-adj-modal')">✕</button></div>
+    <div class="modal-body" style="text-align:center;padding:2rem;">
+      <div style="font-size:3rem;margin-bottom:.75rem;">⚠️</div>
+      <p>Delete this adjustment? This may affect payroll calculations for the period.</p>
+    </div>
+    <div class="modal-footer" style="justify-content:center;gap:.75rem;">
+      <button class="btn btn-outline" onclick="closeModal('del-adj-modal')">Cancel</button>
+      <button class="btn btn-danger" id="confirm-del-adj">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  function onAdjTypeChange() {
+    const type = document.getElementById('adj-type').value;
+    const isOT = type === 'overtime';
+
+    // Toggle sections
+    document.getElementById('leave-type-wrap').style.display = isOT ? 'none' : '';
+    document.getElementById('hours-wrap').style.display      = isOT ? '' : 'none';
+    document.getElementById('ot-rate-wrap').style.display    = isOT ? '' : 'none';
+
+    const amountField = document.getElementById('adj-amount');
+    const amountHint  = document.getElementById('amount-hint');
+    const amountNote  = document.getElementById('amount-note');
+
+    if (isOT) {
+      // Overtime = auto-computed
+      amountField.readOnly = true;
+      amountField.style.background = 'var(--gray-50)';
+      amountField.style.color = 'var(--gray-500)';
+
+      amountHint.textContent = '— auto-computed: hours × OT rate';
+      amountNote.innerHTML = '';
+
+      recalcOTAmount();
+    } else {
+      // Leave = manual input
+      amountField.readOnly = false;
+      amountField.style.background = '';
+      amountField.style.color = '';
+
+      amountHint.textContent = '— enter manually';
+      amountNote.innerHTML =
+        '<span style="color:var(--blue-700);">' +
+        'Positive (+) = leave pay added to salary. ' +
+        'Negative (−) = salary deduction for unpaid leave.' +
+        '</span>';
+    }
+  }
+
+  function loadEmployeeOTRate() {
+    const sel = document.getElementById('adj-employee');
+
+    if (!sel.selectedIndex || sel.selectedIndex < 0) {
+      document.getElementById('adj-ot-rate-display').value = '';
+      return;
+    }
+
+    const opt = sel.options[sel.selectedIndex];
+    const rate = parseFloat(opt.dataset.otRate || '0');
+
+    document.getElementById('adj-ot-rate-display').value =
+      '₱' + rate.toFixed(2) + '/hr';
+
+    recalcOTAmount();
+  }
+
+  function recalcOTAmount() {
+    const type = document.getElementById('adj-type').value;
+
+    if (type !== 'overtime') return;
+
+    const empSelect = document.getElementById('adj-employee');
+    const opt = empSelect.options[empSelect.selectedIndex];
+
+    const rate = parseFloat(opt?.dataset?.otRate || '0');
+    const hours = parseFloat(document.getElementById('adj-hours').value || '0');
+
+    const amount = (hours * rate).toFixed(2);
+
+    document.getElementById('adj-amount').value = amount;
+  }
+
+  function editAdj(id, type, empId, periodId, hours, rate, amount, desc, leaveTypeId) {
+    document.getElementById('adj-modal-title').textContent = 'Edit Adjustment';
+
+    document.getElementById('adj-action').value = 'update';
+    document.getElementById('adj-id-input').value = id;
+
+    document.getElementById('adj-type').value = type;
+    document.getElementById('adj-employee').value = empId;
+    document.getElementById('adj-period').value = periodId;
+
+    document.getElementById('adj-hours').value = hours;
+    document.getElementById('adj-amount').value = amount;
+    document.getElementById('adj-desc').value = desc;
+
+    if (leaveTypeId) {
+      document.getElementById('adj-leave-type').value = leaveTypeId;
+    }
+
+    onAdjTypeChange();
+    loadEmployeeOTRate();
+
+    openModal('add-adj-modal');
+  }
+
+  function deleteAdj(id) {
+    document.getElementById('confirm-del-adj').onclick = () => {
+      const f = document.createElement('form');
+
+      f.method = 'post';
+      f.action = "{% url 'payroll:adjustments' %}";
+
+      f.innerHTML = `
+        {% csrf_token %}
+        <input type="hidden" name="action" value="delete">
+        <input type="hidden" name="adj_id" value="${id}">
+      `;
+
+      document.body.appendChild(f);
+      f.submit();
+    };
+
+    openModal('del-adj-modal');
+  }
+
+  // Initialize on page load
+  document.addEventListener('DOMContentLoaded', () => {
+    onAdjTypeChange();
+  });
+</script>
+{% endblock %}

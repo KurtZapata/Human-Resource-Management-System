@@ -1,0 +1,308 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Payslips{% endblock %}
+{% block page_title %}Payslips{% endblock %}
+{% block breadcrumb %}Payroll › Payslips{% endblock %}
+
+{% block header_actions %}
+  <a href="{% url 'payroll:report' %}" class="btn btn-gold btn-sm">📋 Full Report</a>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .period-tabs {
+    display: flex; gap: .35rem; flex-wrap: wrap;
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-lg); padding: .75rem 1rem;
+    margin-bottom: 1.25rem;
+  }
+  .ptab {
+    padding: .4rem .9rem; border-radius: 20px;
+    font-size: .82rem; font-weight: 600; cursor: pointer;
+    border: 1.5px solid var(--gray-300); background: var(--white); color: var(--gray-600);
+    transition: all .15s; font-family: var(--font-display);
+  }
+  .ptab:hover { border-color: var(--blue-600); color: var(--blue-800); }
+  .ptab.active { background: var(--blue-800); border-color: var(--blue-800); color: var(--white); }
+
+  /* Payslip cards view */
+  .payslips-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(280px,1fr)); gap: 1rem; }
+  .payslip-card {
+    background: var(--white); border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius-lg); padding: 1.15rem 1.25rem;
+    box-shadow: var(--shadow-sm); transition: all .2s;
+  }
+  .payslip-card:hover { border-color: var(--blue-500); box-shadow: var(--shadow-md); }
+  .payslip-card-header { display:flex; align-items:center; gap:.7rem; margin-bottom:.85rem; }
+  .ps-av {
+    width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+    background: var(--blue-800); color: var(--white);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: .88rem;
+  }
+  .ps-av.confirmed { background: var(--success); }
+  .ps-emp-name { font-size: .9rem; font-weight: 800; color: var(--gray-800); }
+  .ps-emp-code { font-size: .72rem; color: var(--gray-400); }
+
+  .payslip-amounts { display: flex; flex-direction: column; gap: .35rem; margin-bottom: .85rem; }
+  .ps-amount-row { display: flex; justify-content: space-between; font-size: .83rem; }
+  .ps-amount-row.net { font-weight: 800; color: var(--blue-800); font-size: .95rem; padding-top: .45rem; border-top: 1px dashed var(--gray-200); }
+
+  .payslip-card-actions { display: flex; gap: .4rem; }
+
+  /* Toggle: list/grid view */
+  .view-toggle { display: flex; gap: .3rem; }
+  .view-btn {
+    width: 32px; height: 32px; border: 1.5px solid var(--gray-300);
+    border-radius: var(--radius-sm); background: var(--white);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; font-size: .85rem; transition: all .15s;
+  }
+  .view-btn.active, .view-btn:hover { background: var(--blue-800); border-color: var(--blue-800); color: var(--white); }
+
+  /* Search bar */
+  .ps-toolbar {
+    display: flex; gap: .75rem; align-items: center; flex-wrap: wrap;
+    margin-bottom: 1.25rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Period Tabs ── -->
+<div class="period-tabs">
+  {% for period in periods %}
+  <button class="ptab {% if period == current_period %}active{% endif %}"
+          onclick="window.location.href='?period_id={{ period.id }}'">
+    {{ period.start_date|date:"M d" }} – {{ period.end_date|date:"M d, Y" }}
+    <span class="badge badge-blue" style="font-size:.65rem;margin-left:.3rem;">{{ period.payroll_count }}</span>
+  </button>
+  {% endfor %}
+</div>
+
+<!-- ── Toolbar ── -->
+<div class="ps-toolbar">
+  <div class="search-bar" style="flex:1;max-width:320px;">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="ps-search" placeholder="Search employee…" oninput="searchPayslips()">
+  </div>
+  <select class="form-control" id="ps-status-filter" style="width:auto;" onchange="searchPayslips()">
+    <option value="">All Status</option>
+    <option value="confirmed">Confirmed</option>
+    <option value="draft">Draft</option>
+  </select>
+  <div style="margin-left:auto;display:flex;gap:.5rem;">
+    <div class="view-toggle">
+      <button class="view-btn active" id="btn-grid" onclick="setView('grid')" title="Grid view">⊞</button>
+      <button class="view-btn" id="btn-list" onclick="setView('list')" title="List view">≡</button>
+    </div>
+    <a href="{% url 'payroll:export_payroll' %}?period_id={{ current_period.id }}" class="btn btn-outline btn-sm">⬇ Export CSV</a>
+  </div>
+</div>
+
+<!-- ── GRID VIEW ── -->
+<div id="grid-view">
+  <div class="payslips-grid" id="ps-grid">
+    {% for payroll in payrolls %}
+    <div class="payslip-card ps-card"
+         data-name="{{ payroll.employee.last_name }} {{ payroll.employee.first_name }}"
+         data-status="{% if payroll.is_confirmed %}confirmed{% else %}draft{% endif %}">
+      <div class="payslip-card-header">
+        <div class="ps-av {% if payroll.is_confirmed %}confirmed{% endif %}">
+          {{ payroll.employee.first_name|slice:":1" }}{{ payroll.employee.last_name|slice:":1" }}
+        </div>
+        <div>
+          <div class="ps-emp-name">{{ payroll.employee.last_name }}, {{ payroll.employee.first_name }}</div>
+          <div class="ps-emp-code">{{ payroll.employee.employee_code }} · {{ payroll.employee.department.name|default:"—" }}</div>
+        </div>
+        <span class="badge {% if payroll.is_confirmed %}badge-success{% else %}badge-warning{% endif %}" style="margin-left:auto;flex-shrink:0;">
+          {% if payroll.is_confirmed %}✓{% else %}⏳{% endif %}
+        </span>
+      </div>
+
+      <div class="payslip-amounts">
+        <div class="ps-amount-row">
+          <span style="color:var(--gray-500);">Basic Pay</span>
+          <span>₱{{ payroll.basic_pay|floatformat:"2" }}</span>
+        </div>
+        <div class="ps-amount-row">
+          <span style="color:var(--gray-500);">Gross Pay</span>
+          <span style="color:var(--success);">₱{{ payroll.gross_pay|floatformat:"2" }}</span>
+        </div>
+        <div class="ps-amount-row">
+          <span style="color:var(--gray-500);">Deductions</span>
+          <span style="color:var(--danger);">– ₱{{ payroll.total_deductions|floatformat:"2" }}</span>
+        </div>
+        <div class="ps-amount-row net">
+          <span>Net Pay</span>
+          <span>₱{{ payroll.net_pay|floatformat:"2" }}</span>
+        </div>
+      </div>
+
+      <div class="payslip-card-actions">
+        <a href="{% url 'payroll:report' %}?period_id={{ current_period.id }}" class="btn btn-outline btn-sm" style="flex:1;">👁 View</a>
+        <button class="btn btn-primary btn-sm" style="flex:1;"
+                onclick="printSinglePayslip({{ payroll.id }})">🖨 Print</button>
+      </div>
+    </div>
+    {% empty %}
+    <div style="grid-column:1/-1;text-align:center;padding:3rem;color:var(--gray-400);">
+      <div style="font-size:2.5rem;margin-bottom:.75rem;">💰</div>
+      No finalized payslips found for this period.
+      <div style="margin-top:.75rem;">
+        <a href="{% url 'payroll:run' %}" class="btn btn-primary btn-sm">▶ Run Payroll Now</a>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<!-- ── LIST VIEW (hidden by default) ── -->
+<div id="list-view" style="display:none;">
+  <div class="card">
+    <div class="card-header"><h3>Payslips List</h3></div>
+    <div class="table-wrap">
+      <table class="data-table" id="ps-table">
+        <thead>
+          <tr>
+            <th>Employee</th>
+            <th>Department</th>
+            <th>Grade</th>
+            <th style="text-align:right;">Basic Pay</th>
+            <th style="text-align:right;">Gross Pay</th>
+            <th style="text-align:right;">Deductions</th>
+            <th style="text-align:right;">Net Pay</th>
+            <th>Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="ps-tbody">
+          {% for payroll in payrolls %}
+          <tr class="ps-row"
+              data-name="{{ payroll.employee.last_name }} {{ payroll.employee.first_name }}"
+              data-status="{% if payroll.is_confirmed %}confirmed{% else %}draft{% endif %}">
+            <td>
+              <div style="display:flex;align-items:center;gap:.55rem;">
+                <div class="ps-av" style="width:30px;height:30px;font-size:.7rem;{% if payroll.is_confirmed %}background:var(--success);{% endif %}">
+                  {{ payroll.employee.first_name|slice:":1" }}{{ payroll.employee.last_name|slice:":1" }}
+                </div>
+                <div>
+                  <strong style="font-size:.85rem;">{{ payroll.employee.last_name }}, {{ payroll.employee.first_name }}</strong>
+                  <div style="font-size:.72rem;color:var(--gray-400);">{{ payroll.employee.employee_code }}</div>
+                </div>
+              </div>
+            </td>
+            <td>{{ payroll.employee.department.name|default:"—" }}</td>
+            <td>{{ payroll.employee.salary_grade.name|default:"—" }}</td>
+            <td style="text-align:right;">₱{{ payroll.basic_pay|floatformat:"2" }}</td>
+            <td style="text-align:right;color:var(--success);">₱{{ payroll.gross_pay|floatformat:"2" }}</td>
+            <td style="text-align:right;color:var(--danger);">₱{{ payroll.total_deductions|floatformat:"2" }}</td>
+            <td style="text-align:right;font-weight:800;color:var(--blue-800);">₱{{ payroll.net_pay|floatformat:"2" }}</td>
+            <td>
+              <span class="badge {% if payroll.is_confirmed %}badge-success{% else %}badge-warning{% endif %}">
+                {% if payroll.is_confirmed %}Confirmed{% else %}Draft{% endif %}
+              </span>
+            </td>
+            <td>
+              <div style="display:flex;gap:.3rem;">
+                <a href="{% url 'payroll:report' %}?period_id={{ current_period.id }}" class="btn btn-outline btn-sm">👁</a>
+                <button class="btn btn-primary btn-sm" onclick="printSinglePayslip({{ payroll.id }})">🖨</button>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Summary footer -->
+{% if payrolls %}
+<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-lg);padding:1rem 1.5rem;margin-top:1.25rem;display:flex;gap:2rem;flex-wrap:wrap;justify-content:flex-end;">
+  <div style="font-size:.85rem;color:var(--gray-500);">
+    Total Gross: <strong style="color:var(--success);">₱{{ totals.gross_pay|floatformat:"2" }}</strong>
+  </div>
+  <div style="font-size:.85rem;color:var(--gray-500);">
+    Total Deductions: <strong style="color:var(--danger);">₱{{ totals.total_deductions|floatformat:"2" }}</strong>
+  </div>
+  <div style="font-size:.95rem;font-weight:800;color:var(--blue-800);">
+    Total Net Pay: ₱{{ totals.net_pay|floatformat:"2" }}
+  </div>
+</div>
+{% endif %}
+
+<!-- Hidden print area for single payslip -->
+<div id="print-area" style="display:none;"></div>
+
+<script>
+  const payrollData = {{ payroll_json|safe|default:"{}" }};
+  const companyName = "{{ company_name|default:'Your Company' }}";
+  const periodLabel = "{{ current_period.start_date|date:'M d' }} – {{ current_period.end_date|date:'M d, Y' }}";
+
+  /* ── View toggle ── */
+  function setView(mode) {
+    document.getElementById('grid-view').style.display = mode === 'grid' ? '' : 'none';
+    document.getElementById('list-view').style.display = mode === 'list' ? '' : 'none';
+    document.getElementById('btn-grid').classList.toggle('active', mode === 'grid');
+    document.getElementById('btn-list').classList.toggle('active', mode === 'list');
+  }
+
+  /* ── Search ── */
+  function searchPayslips() {
+    const q      = document.getElementById('ps-search').value.toLowerCase();
+    const status = document.getElementById('ps-status-filter').value;
+    document.querySelectorAll('.ps-card, .ps-row').forEach(el => {
+      const name = (el.dataset.name || '').toLowerCase();
+      const st   = el.dataset.status || '';
+      el.style.display = ((!q || name.includes(q)) && (!status || st === status)) ? '' : 'none';
+    });
+  }
+
+  /* ── Print single payslip ── */
+  function fmt(n) { return (parseFloat(n)||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+  function printSinglePayslip(id) {
+    const d = payrollData[id];
+    if (!d) { window.location.href = "{% url 'payroll:report' %}?period_id={{ current_period.id }}"; return; }
+    const earnings   = (d.breakdown||[]).filter(b=>b.type==='earning').map(e=>`<tr><td>${e.name}</td><td style="text-align:right">₱${fmt(e.amount)}</td></tr>`).join('');
+    const deductions = (d.breakdown||[]).filter(b=>b.type==='deduction').map(e=>`<tr><td>${e.name}</td><td style="text-align:right;color:#DC2626">₱${fmt(e.amount)}</td></tr>`).join('');
+    const html = `
+      <style>
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap');
+        *{box-sizing:border-box;margin:0;padding:0;} body{font-family:'Outfit',sans-serif;padding:1.5cm;}
+        table{width:100%;border-collapse:collapse;} td{padding:.4rem .5rem;font-size:.9rem;}
+        .hdr{background:#0D2D5E;color:#fff;padding:1.2rem 1.5rem;border-radius:8px 8px 0 0;display:flex;justify-content:space-between;}
+        .net{background:#0D2D5E;color:#F5C518;padding:1rem 1.5rem;display:flex;justify-content:space-between;align-items:center;font-size:1.4rem;font-weight:800;}
+        .band{background:#EEF3FF;padding:.8rem 1.5rem;display:grid;grid-template-columns:repeat(3,1fr);gap:.5rem;font-size:.82rem;}
+        .body{padding:1.2rem 1.5rem;} .sig{border-top:1px solid #999;margin-top:2rem;padding-top:.3rem;font-size:.75rem;color:#666;text-align:center;}
+        tfoot td{font-weight:800;border-top:2px solid #ddd;padding-top:.5rem;}
+      </style>
+      <div class="hdr"><div><h2 style="font-size:1.2rem">${companyName}</h2><p style="opacity:.6;font-size:.78rem">HR Management System</p></div><div style="text-align:right"><h3 style="color:#F5C518">PAYSLIP</h3><p style="opacity:.6;font-size:.78rem">${periodLabel}</p></div></div>
+      <div class="band">
+        <div><div style="font-size:.65rem;color:#888;text-transform:uppercase;letter-spacing:.06em">Employee</div><div style="font-weight:700">${d.last_name}, ${d.first_name}</div></div>
+        <div><div style="font-size:.65rem;color:#888;text-transform:uppercase;letter-spacing:.06em">Employee ID</div><div style="font-weight:700">${d.employee_code}</div></div>
+        <div><div style="font-size:.65rem;color:#888;text-transform:uppercase;letter-spacing:.06em">Department</div><div style="font-weight:700">${d.department||'—'}</div></div>
+        <div><div style="font-size:.65rem;color:#888;text-transform:uppercase;letter-spacing:.06em">Position</div><div style="font-weight:700">${d.position||'—'}</div></div>
+        <div><div style="font-size:.65rem;color:#888;text-transform:uppercase;letter-spacing:.06em">Salary Grade</div><div style="font-weight:700">${d.salary_grade||'—'}</div></div>
+        <div><div style="font-size:.65rem;color:#888;text-transform:uppercase;letter-spacing:.06em">Type</div><div style="font-weight:700">${(d.employment_type||'').charAt(0).toUpperCase()+(d.employment_type||'').slice(1)}</div></div>
+      </div>
+      <div class="body" style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;">
+        <div><div style="font-size:.7rem;font-weight:700;color:#1A4C9E;background:#E8EFFE;padding:.3rem .6rem;border-radius:4px;margin-bottom:.5rem">EARNINGS</div>
+        <table><tbody><tr><td>Basic Pay</td><td style="text-align:right">₱${fmt(d.basic_pay)}</td></tr>${earnings}</tbody><tfoot><tr><td style="color:#16A34A">Total Earnings</td><td style="text-align:right;color:#16A34A">₱${fmt(d.gross_pay)}</td></tr></tfoot></table></div>
+        <div><div style="font-size:.7rem;font-weight:700;color:#1A4C9E;background:#E8EFFE;padding:.3rem .6rem;border-radius:4px;margin-bottom:.5rem">DEDUCTIONS</div>
+        <table><tbody>${deductions||'<tr><td colspan="2" style="color:#999;font-style:italic">No deductions</td></tr>'}</tbody><tfoot><tr><td style="color:#DC2626">Total Deductions</td><td style="text-align:right;color:#DC2626">₱${fmt(d.total_deductions)}</td></tr></tfoot></table></div>
+      </div>
+      <div class="net"><span>NET PAY — ${periodLabel}</span><span>₱${fmt(d.net_pay)}</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:3rem;padding:1.2rem 1.5rem;">
+        <div class="sig">Employee Signature over Printed Name</div>
+        <div class="sig">Authorized by / HR Manager</div>
+      </div>`;
+    const pa = document.getElementById('print-area');
+    pa.style.display = 'block'; pa.innerHTML = html;
+    setTimeout(()=>{ window.print(); pa.style.display='none'; pa.innerHTML=''; }, 150);
+  }
+</script>
+{% endblock %}

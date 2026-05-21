@@ -1,0 +1,689 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}OTP Manager{% endblock %}
+{% block page_title %}OTP Manager{% endblock %}
+{% block breadcrumb %}Attendance › OTP Manager{% endblock %}
+
+{% block extra_css %}
+<style>
+  .otp-layout {
+    display: grid;
+    grid-template-columns: 1fr 360px;
+    gap: 1.25rem;
+    align-items: start;
+  }
+  @media (max-width: 1000px) { .otp-layout { grid-template-columns: 1fr; } }
+
+  .otp-stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: .9rem;
+    margin-bottom: 1.25rem;
+  }
+  @media (max-width: 700px) { .otp-stats { grid-template-columns: repeat(2, 1fr); } }
+
+  /* ── Main display card ── */
+  .otp-display-card {
+    background: var(--blue-900);
+    border-radius: var(--radius-xl);
+    overflow: hidden;
+    box-shadow: var(--shadow-xl);
+  }
+  .otp-display-header {
+    padding: 1rem 1.5rem;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid rgba(255,255,255,.08);
+  }
+  .otp-display-header h3 { font-size: .9rem; font-weight: 700; color: rgba(255,255,255,.7); }
+  .auto-badge {
+    display: flex; align-items: center; gap: .4rem;
+    background: rgba(74,222,128,.12); border: 1px solid rgba(74,222,128,.3);
+    border-radius: 20px; padding: .25rem .75rem;
+    font-size: .75rem; font-weight: 700; color: #4ADE80;
+  }
+  .auto-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: #4ADE80; animation: autoPulse 1.5s infinite;
+  }
+  @keyframes autoPulse {
+    0%,100% { opacity:1; transform:scale(1); }
+    50%      { opacity:.4; transform:scale(.7); }
+  }
+
+  .otp-display-body {
+    padding: 2rem 1.5rem;
+    display: flex; flex-direction: column; align-items: center;
+  }
+
+  /* Thin progress strip */
+  .otp-progress-track {
+    width: 100%; height: 4px;
+    background: rgba(255,255,255,.08); border-radius: 2px;
+    overflow: hidden; margin-bottom: 2rem;
+  }
+  .otp-progress-fill {
+    height: 100%; background: var(--gold-500); border-radius: 2px;
+    transition: width 1s linear, background .5s;
+  }
+  .otp-progress-fill.urgent { background: var(--danger); }
+
+  /* The code */
+  .otp-code {
+    font-size: clamp(3rem, 8vw, 5rem);
+    font-weight: 900; color: var(--gold-400);
+    letter-spacing: .3em; font-variant-numeric: tabular-nums;
+    font-family: 'Outfit', monospace; line-height: 1;
+    text-shadow: 0 4px 32px rgba(245,197,24,.25);
+    transition: opacity .3s, transform .3s;
+    padding-right: .3em;
+  }
+  .otp-code.refreshing { opacity: 0; transform: translateY(-8px) scale(.97); }
+  .otp-code.urgent     { color: #F87171; text-shadow: 0 4px 32px rgba(248,113,113,.3); }
+
+  .otp-timer-row {
+    display: flex; align-items: center; gap: .75rem; margin-top: 1.25rem;
+  }
+  .otp-timer-num {
+    font-size: 1.4rem; font-weight: 800; color: rgba(255,255,255,.8);
+    font-variant-numeric: tabular-nums; min-width: 44px; text-align: center;
+  }
+  .otp-timer-label {
+    font-size: .78rem; color: rgba(255,255,255,.4);
+    font-weight: 600; text-transform: uppercase; letter-spacing: .07em;
+  }
+  .otp-scope-row {
+    margin-top: 1rem; padding: .5rem 1rem;
+    background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+    border-radius: 20px; font-size: .8rem; color: rgba(255,255,255,.55);
+    display: flex; align-items: center; gap: .5rem;
+  }
+  .otp-next-row { margin-top: .75rem; font-size: .75rem; color: rgba(255,255,255,.3); }
+
+  .otp-display-footer {
+    padding: 1rem 1.5rem; border-top: 1px solid rgba(255,255,255,.08);
+    display: flex; gap: .65rem;
+  }
+  .btn-fullscreen {
+    flex: 1; padding: .65rem;
+    background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.15);
+    border-radius: var(--radius-sm); color: var(--white);
+    font-family: var(--font-display); font-size: .88rem; font-weight: 600;
+    cursor: pointer; transition: all .2s;
+    display: flex; align-items: center; justify-content: center; gap: .4rem;
+  }
+  .btn-fullscreen:hover { background: rgba(255,255,255,.16); }
+  .btn-force-rotate {
+    flex: 1; padding: .65rem; background: var(--gold-500); border: none;
+    border-radius: var(--radius-sm); color: var(--gray-900);
+    font-family: var(--font-display); font-size: .88rem; font-weight: 700;
+    cursor: pointer; transition: all .2s;
+    display: flex; align-items: center; justify-content: center; gap: .4rem;
+  }
+  .btn-force-rotate:hover { background: var(--gold-400); transform: translateY(-1px); }
+
+  /* ── Right panel ── */
+  .otp-settings-card {
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-xl); overflow: hidden; box-shadow: var(--shadow-sm);
+    margin-bottom: 1rem;
+  }
+  .settings-section-label {
+    font-size: .7rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .09em; color: var(--gray-400); margin-bottom: .6rem; display: block;
+  }
+
+  /* Interval presets */
+  .interval-presets {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: .4rem; margin-bottom: 1rem;
+  }
+  .interval-btn {
+    padding: .45rem .2rem; border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius-sm); background: var(--white);
+    font-family: var(--font-display); font-size: .82rem; font-weight: 700;
+    color: var(--gray-600); cursor: pointer; transition: all .15s; text-align: center;
+  }
+  .interval-btn:hover  { border-color: var(--blue-600); color: var(--blue-800); }
+  .interval-btn.active { background: var(--blue-800); border-color: var(--blue-800); color: var(--white); }
+
+  /* Scope toggle */
+  .scope-toggle-row { display: flex; gap: .4rem; margin-bottom: 1rem; }
+  .scope-toggle-btn {
+    flex: 1; padding: .5rem; border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius-sm); background: var(--white);
+    font-family: var(--font-display); font-size: .82rem; font-weight: 700;
+    color: var(--gray-600); cursor: pointer; transition: all .15s; text-align: center;
+  }
+  .scope-toggle-btn.active { background: var(--blue-800); border-color: var(--blue-800); color: var(--white); }
+
+  /* Log table */
+  .otp-log-table thead th {
+    font-size: .68rem; background: var(--blue-50); color: var(--blue-900);
+    text-transform: uppercase; letter-spacing: .05em; padding: .5rem .85rem;
+  }
+  .otp-log-table tbody td { padding: .5rem .85rem; font-size: .82rem; }
+  .otp-log-table tbody tr.current-row { background: var(--gold-100); }
+  .status-dot {
+    display: inline-block; width: 7px; height: 7px;
+    border-radius: 50%; margin-right: .3rem; vertical-align: middle;
+  }
+  .status-dot.active  { background: #4ADE80; box-shadow: 0 0 0 2px rgba(74,222,128,.25); }
+  .status-dot.used    { background: var(--gray-300); }
+  .status-dot.expired { background: var(--danger); }
+
+  /* ── Fullscreen overlay ── */
+  .fs-overlay {
+    display: none; position: fixed; inset: 0; z-index: 9999;
+    background: var(--blue-900);
+    flex-direction: column; align-items: center; justify-content: center; gap: 1.5rem;
+  }
+  .fs-overlay.open { display: flex; }
+  .fs-company { font-size: .95rem; font-weight: 600; color: rgba(255,255,255,.4); }
+  .fs-label   { font-size: 1rem; font-weight: 600; color: rgba(255,255,255,.55); text-align: center; }
+  .fs-code {
+    font-size: clamp(6rem, 18vw, 11rem);
+    font-weight: 900; color: var(--gold-400);
+    letter-spacing: .35em; font-variant-numeric: tabular-nums; line-height: 1;
+    text-shadow: 0 8px 60px rgba(245,197,24,.35);
+    transition: opacity .3s, transform .3s; padding-right: .35em;
+  }
+  .fs-code.refreshing { opacity: 0; transform: scale(.93); }
+  .fs-code.urgent     { color: #F87171; text-shadow: 0 8px 60px rgba(248,113,113,.35); }
+  .fs-progress-wrap { width: min(500px, 80vw); }
+  .fs-progress-track {
+    width: 100%; height: 8px;
+    background: rgba(255,255,255,.1); border-radius: 4px; overflow: hidden;
+  }
+  .fs-progress-fill {
+    height: 100%; background: var(--gold-500); border-radius: 4px;
+    transition: width 1s linear, background .5s;
+  }
+  .fs-progress-fill.urgent { background: var(--danger); }
+  .fs-timer { font-size: 1.3rem; font-weight: 700; color: rgba(255,255,255,.6); font-variant-numeric: tabular-nums; }
+  .fs-scope { font-size: .85rem; color: rgba(255,255,255,.4); text-align: center; }
+  .fs-next  { font-size: .78rem; color: rgba(255,255,255,.25); text-align: center; }
+  .fs-close {
+    position: fixed; top: 1.5rem; right: 1.5rem;
+    background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2);
+    border-radius: var(--radius-sm); color: var(--white);
+    padding: .5rem 1.1rem; font-family: var(--font-display);
+    font-size: .85rem; font-weight: 600; cursor: pointer; transition: all .2s;
+  }
+  .fs-close:hover { background: rgba(255,255,255,.2); }
+  .fs-auto-tag {
+    position: fixed; top: 1.5rem; left: 1.5rem;
+    display: flex; align-items: center; gap: .45rem;
+    background: rgba(74,222,128,.15); border: 1px solid rgba(74,222,128,.3);
+    border-radius: 20px; padding: .35rem .9rem;
+    font-size: .8rem; font-weight: 700; color: #4ADE80;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- Stats -->
+<div class="otp-stats">
+  <div class="stat-card">
+    <div class="stat-icon blue">🔢</div>
+    <div><div class="stat-num" id="stat-total">{{ stats.total_today }}</div><div class="stat-label">Generated Today</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon green">✅</div>
+    <div><div class="stat-num" id="stat-used">{{ stats.used_today }}</div><div class="stat-label">Used Today</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon gold">⏳</div>
+    <div><div class="stat-num" id="stat-active">{{ stats.active_now }}</div><div class="stat-label">Active Now</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon red">❌</div>
+    <div><div class="stat-num" id="stat-expired">{{ stats.expired_today }}</div><div class="stat-label">Expired Today</div></div>
+  </div>
+</div>
+
+<div class="otp-layout">
+
+  <!-- ══ LEFT: Main OTP Display ══ -->
+  <div>
+    <div class="otp-display-card">
+      <div class="otp-display-header">
+        <h3>🔢 Attendance OTP — Auto-Rotating</h3>
+        <div style="display:flex;align-items:center;gap:.6rem;">
+          <div class="auto-badge"><div class="auto-dot"></div> Auto</div>
+          <span style="font-size:.75rem;color:rgba(255,255,255,.35);" id="header-scope-label">Global</span>
+        </div>
+      </div>
+
+      <div class="otp-display-body">
+        <div class="otp-progress-track">
+          <div class="otp-progress-fill" id="otp-progress-fill" style="width:100%;"></div>
+        </div>
+
+        <div class="otp-code" id="otp-code-display">• • • • • •</div>
+
+        <div class="otp-timer-row">
+          <div class="otp-timer-num" id="otp-timer-num">3:00</div>
+          <div class="otp-timer-label">until next rotation</div>
+        </div>
+
+        <div class="otp-scope-row" id="otp-scope-row">
+          🌐 Global — any employee can use this code
+        </div>
+
+        <div class="otp-next-row">
+          Next code at <span id="otp-next-time">—</span>
+        </div>
+      </div>
+
+      <div class="otp-display-footer">
+        <button class="btn-fullscreen" onclick="openFullscreen()">⛶ Full Screen</button>
+        <button class="btn-force-rotate" onclick="forceRotate()">🔄 Rotate Now</button>
+      </div>
+    </div>
+
+    <!-- How it works -->
+    <div class="card" style="margin-top:1.25rem;">
+      <div class="card-header"><h3>📋 How Auto-OTP Works</h3></div>
+      <div class="card-body" style="font-size:.86rem;color:var(--gray-600);line-height:1.8;">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.25rem;">
+          <div>
+            <strong style="color:var(--gray-800);">Admin Screen:</strong>
+            <ol style="padding-left:1.25rem;margin-top:.35rem;">
+              <li>A new OTP is generated automatically every <strong id="how-interval">3 minutes</strong>.</li>
+              <li>Display this page on a screen employees can see, or use <em>Full Screen</em>.</li>
+              <li>Use <em>Rotate Now</em> to force an immediate new code.</li>
+              <li>Switch to <em>Employee-Specific</em> to lock a code to one person.</li>
+            </ol>
+          </div>
+          <div>
+            <strong style="color:var(--gray-800);">Employee Steps:</strong>
+            <ol style="padding-left:1.25rem;margin-top:.35rem;">
+              <li>Log in at the attendance portal.</li>
+              <li>Click <em>Time In</em> or <em>Time Out</em>.</li>
+              <li>Type the 6-digit code shown on the screen.</li>
+              <li>A confirmation shows their logged time.</li>
+            </ol>
+          </div>
+        </div>
+        <div style="margin-top:1rem;padding:.7rem 1rem;background:var(--gold-100);border:1px solid #E5C000;border-radius:var(--radius-sm);font-size:.79rem;color:var(--gray-700);">
+          ⚠ Each OTP code can only be used <strong>once per employee</strong> within its validity window.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ RIGHT: Settings + Log ══ -->
+  <div>
+    <div class="otp-settings-card">
+      <div style="padding:1.1rem 1.25rem;border-bottom:1px solid var(--gray-100);">
+        <h3 style="font-size:.95rem;font-weight:800;">⚙ OTP Settings</h3>
+      </div>
+      <div style="padding:1.1rem 1.25rem;">
+
+        <span class="settings-section-label">Rotation Interval</span>
+        <div class="interval-presets">
+          <button class="interval-btn" data-secs="60"   onclick="setIntervalMode(this,60)">1 min</button>
+          <button class="interval-btn" data-secs="120"  onclick="setIntervalMode(this,120)">2 min</button>
+          <button class="interval-btn active" data-secs="180" onclick="setIntervalMode(this,180)">3 min</button>
+          <button class="interval-btn" data-secs="300"  onclick="setIntervalMode(this,300)">5 min</button>
+          <button class="interval-btn" data-secs="600"  onclick="setIntervalMode(this,600)">10 min</button>
+          <button class="interval-btn" data-secs="900"  onclick="setIntervalMode(this,900)">15 min</button>
+          <button class="interval-btn" data-secs="1800" onclick="setIntervalMode(this,1800)">30 min</button>
+          <button class="interval-btn" data-secs="0"    onclick="setIntervalMode(this,0)">Manual</button>
+        </div>
+
+        <span class="settings-section-label">OTP Scope</span>
+        <div class="scope-toggle-row">
+          <button class="scope-toggle-btn active" onclick="setScope('global', this)">🌐 Global</button>
+          <button class="scope-toggle-btn"        onclick="setScope('employee', this)">👤 Specific</button>
+        </div>
+
+        <div id="emp-picker-wrap" style="display:none;margin-bottom:.75rem;">
+          <span class="settings-section-label">Employee</span>
+          <select id="specific-emp-select" class="form-control" onchange="onEmpChange()">
+            <option value="">Choose employee…</option>
+            {% for emp in employees %}
+            <option value="{{ emp.id }}"
+                    data-name="{{ emp.first_name }} {{ emp.last_name }}"
+                    data-code="{{ emp.employee_code }}">
+              {{ emp.last_name }}, {{ emp.first_name }} ({{ emp.employee_code }})
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div id="manual-note"
+             style="display:none;background:var(--gray-50);border:1px solid var(--gray-200);
+                    border-radius:var(--radius-sm);padding:.65rem .85rem;
+                    font-size:.8rem;color:var(--gray-600);">
+          Manual mode — click <strong>Rotate Now</strong> to generate a new OTP.
+        </div>
+      </div>
+    </div>
+
+    <!-- Today's log -->
+    <div class="card">
+      <div class="card-header">
+        <h3>OTP Log — Today</h3>
+        <div class="auto-badge" style="font-size:.7rem;"><div class="auto-dot"></div> Live</div>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table otp-log-table">
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Scope</th>
+              <th>Created</th>
+              <th>Expires</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="otp-log-tbody">
+            {% for otp in otps %}
+            <tr {% if forloop.first %}class="current-row"{% endif %}>
+              <td><code style="font-size:.88rem;font-weight:800;letter-spacing:.12em;color:var(--blue-800);">{{ otp.code }}</code></td>
+              <td>
+                {% if otp.used_by_employee %}
+                  <span class="badge badge-blue" style="font-size:.68rem;">Specific</span>
+                {% else %}
+                  <span class="badge badge-gold" style="font-size:.68rem;">Global</span>
+                {% endif %}
+              </td>
+              <td>{{ otp.created_at|time:"H:i:s" }}</td>
+              <td>{{ otp.expires_at|time:"H:i:s" }}</td>
+              <td>
+                {% if otp.is_used %}
+                  <span class="status-dot used"></span>Used
+                {% else %}
+                  <span class="status-dot active"></span>Active
+                {% endif %}
+              </td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" style="text-align:center;padding:1.5rem;color:var(--gray-400);">No OTPs yet today.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ FULLSCREEN OVERLAY ══ -->
+<div class="fs-overlay" id="fs-overlay">
+  <button class="fs-close" onclick="closeFullscreen()">✕ Close</button>
+  <div class="fs-auto-tag"><div class="auto-dot"></div> Auto-Rotating</div>
+  <div class="fs-company">{{ company_name }} — HR Management System</div>
+  <div class="fs-label" id="fs-label">Global Attendance OTP</div>
+  <div class="fs-code" id="fs-code">• • • • • •</div>
+  <div class="fs-progress-wrap">
+    <div class="fs-progress-track">
+      <div class="fs-progress-fill" id="fs-progress-fill" style="width:100%;"></div>
+    </div>
+  </div>
+  <div class="fs-timer" id="fs-timer">3:00 remaining</div>
+  <div class="fs-scope" id="fs-scope">Global — any employee can use this</div>
+  <div class="fs-next">Next rotation at <span id="fs-next-time">—</span></div>
+</div>
+
+<script>
+  /* ═══════════════════════════════════════════════════
+     CONFIGURATION
+  ═══════════════════════════════════════════════════ */
+  let INTERVAL_SECS  = 180;     // default 3 minutes
+  let currentScope   = 'global';
+  let currentEmpId   = null;
+  let currentEmpInfo = null;
+  let isManualMode   = false;
+
+  /* ═══════════════════════════════════════════════════
+     STATE
+  ═══════════════════════════════════════════════════ */
+  let currentCode      = null;
+  let remainingSecs    = 180;
+  let countdownHandle  = null;
+  let autoHandle       = null;
+
+  /* ═══════════════════════════════════════════════════
+     BOOT — generate first OTP immediately on page load
+  ═══════════════════════════════════════════════════ */
+  document.addEventListener('DOMContentLoaded', () => {
+    generateAndDisplay();
+    startAutoRotate();
+    setInterval(refreshLog,   15000);
+    setInterval(refreshStats, 30000);
+  });
+
+  /* ═══════════════════════════════════════════════════
+     AUTO ROTATION
+  ═══════════════════════════════════════════════════ */
+  function startAutoRotate() {
+    stopAutoRotate();
+    if (isManualMode) return;
+    autoHandle = setInterval(generateAndDisplay, INTERVAL_SECS * 1000);
+  }
+  function stopAutoRotate() {
+    if (autoHandle) { clearInterval(autoHandle); autoHandle = null; }
+  }
+
+  /* ═══════════════════════════════════════════════════
+     COUNTDOWN
+  ═══════════════════════════════════════════════════ */
+  function startCountdown() {
+    stopCountdown();
+    remainingSecs = INTERVAL_SECS;
+    updateCountdownUI();
+    if (isManualMode) return;
+    countdownHandle = setInterval(() => {
+      remainingSecs = Math.max(0, remainingSecs - 1);
+      updateCountdownUI();
+    }, 1000);
+  }
+  function stopCountdown() {
+    if (countdownHandle) { clearInterval(countdownHandle); countdownHandle = null; }
+  }
+  function updateCountdownUI() {
+    const pct    = INTERVAL_SECS > 0 ? remainingSecs / INTERVAL_SECS : 1;
+    const urgent = !isManualMode && remainingSecs <= 30;
+    const mins   = Math.floor(remainingSecs / 60);
+    const secs   = remainingSecs % 60;
+    const timeStr = `${mins}:${String(secs).padStart(2,'0')}`;
+
+    // Panel
+    document.getElementById('otp-timer-num').textContent     = isManualMode ? '∞' : timeStr;
+    document.getElementById('otp-progress-fill').style.width = `${pct * 100}%`;
+    document.getElementById('otp-progress-fill').classList.toggle('urgent', urgent);
+    document.getElementById('otp-code-display').classList.toggle('urgent', urgent);
+
+    // Fullscreen
+    document.getElementById('fs-timer').textContent         = isManualMode ? 'Manual mode' : `${timeStr} remaining`;
+    document.getElementById('fs-progress-fill').style.width = `${pct * 100}%`;
+    document.getElementById('fs-progress-fill').classList.toggle('urgent', urgent);
+    document.getElementById('fs-code').classList.toggle('urgent', urgent);
+
+    // Next rotation time label
+    if (!isManualMode) {
+      const next    = new Date(Date.now() + remainingSecs * 1000);
+      const nextStr = next.toLocaleTimeString('en-PH', { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+      document.getElementById('otp-next-time').textContent = nextStr;
+      document.getElementById('fs-next-time').textContent  = nextStr;
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════
+     GENERATE OTP (server call)
+  ═══════════════════════════════════════════════════ */
+  async function generateAndDisplay() {
+    try {
+      const expiryMins = isManualMode ? 60 : Math.ceil(INTERVAL_SECS / 60) + 1;
+      const res = await apiPost("{% url 'attendance:generate_otp' %}", {
+        employee_id:     currentEmpId,
+        expires_minutes: expiryMins,
+      });
+      if (res.code) {
+        animateCodeChange(() => {
+          currentCode = res.code;
+          document.getElementById('otp-code-display').textContent = res.code;
+          document.getElementById('otp-code-display').classList.remove('urgent');
+          document.getElementById('fs-code').textContent          = res.code;
+          document.getElementById('fs-code').classList.remove('urgent');
+          updateScopeLabels();
+          startCountdown();
+          refreshLog();
+          refreshStats();
+        });
+      }
+    } catch (e) {
+      console.error('OTP generation error:', e);
+      showToast('OTP generation failed. Retrying next cycle.', 'error');
+    }
+  }
+
+  function animateCodeChange(cb) {
+    const els = [
+      document.getElementById('otp-code-display'),
+      document.getElementById('fs-code'),
+    ];
+    els.forEach(el => el.classList.add('refreshing'));
+    setTimeout(() => {
+      cb();
+      els.forEach(el => el.classList.remove('refreshing'));
+    }, 300);
+  }
+
+  /* ═══════════════════════════════════════════════════
+     SCOPE LABELS
+  ═══════════════════════════════════════════════════ */
+  function updateScopeLabels() {
+    if (currentEmpInfo) {
+      const t = `👤 ${currentEmpInfo.name} (${currentEmpInfo.code}) only`;
+      document.getElementById('otp-scope-row').textContent      = t;
+      document.getElementById('fs-scope').textContent           = t;
+      document.getElementById('fs-label').textContent           = 'Employee-Specific OTP';
+      document.getElementById('header-scope-label').textContent = 'Specific';
+    } else {
+      document.getElementById('otp-scope-row').textContent      = '🌐 Global — any employee can use this code';
+      document.getElementById('fs-scope').textContent           = 'Global — any employee can use this';
+      document.getElementById('fs-label').textContent           = 'Global Attendance OTP';
+      document.getElementById('header-scope-label').textContent = 'Global';
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════
+     CONTROLS
+  ═══════════════════════════════════════════════════ */
+  function forceRotate() {
+    stopAutoRotate();
+    stopCountdown();
+    generateAndDisplay();
+    if (!isManualMode) startAutoRotate();
+  }
+
+  function setIntervalMode(btn, secs) {
+    document.querySelectorAll('.interval-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    isManualMode  = (secs === 0);
+    INTERVAL_SECS = secs || 180;
+
+    // Update "How it works" label
+    const label = isManualMode ? 'manual rotation' : formatSecs(secs);
+    document.getElementById('how-interval').textContent = label;
+    document.getElementById('manual-note').style.display = isManualMode ? 'block' : 'none';
+
+    stopAutoRotate();
+    stopCountdown();
+
+    if (isManualMode) {
+      // Show infinity, keep current code visible
+      document.getElementById('otp-timer-num').textContent     = '∞';
+      document.getElementById('fs-timer').textContent          = 'Manual mode';
+      document.getElementById('otp-progress-fill').style.width = '100%';
+      document.getElementById('fs-progress-fill').style.width  = '100%';
+    } else {
+      // Regenerate immediately with new interval
+      generateAndDisplay();
+      startAutoRotate();
+    }
+  }
+
+  function formatSecs(s) {
+    if (s >= 3600) return `${s/3600} hour${s/3600>1?'s':''}`;
+    if (s >= 60)   return `${s/60} minute${s/60>1?'s':''}`;
+    return `${s} seconds`;
+  }
+
+  function setScope(scope, btn) {
+    document.querySelectorAll('.scope-toggle-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentScope = scope;
+    document.getElementById('emp-picker-wrap').style.display = scope === 'employee' ? 'block' : 'none';
+    if (scope === 'global') {
+      currentEmpId   = null;
+      currentEmpInfo = null;
+      forceRotate();
+    }
+  }
+
+  function onEmpChange() {
+    const sel = document.getElementById('specific-emp-select');
+    const opt = sel.options[sel.selectedIndex];
+    if (sel.value) {
+      currentEmpId   = parseInt(sel.value);
+      currentEmpInfo = { id: currentEmpId, name: opt.dataset.name, code: opt.dataset.code };
+      forceRotate();
+    } else {
+      currentEmpId   = null;
+      currentEmpInfo = null;
+    }
+  }
+
+  /* ═══════════════════════════════════════════════════
+     FULLSCREEN
+  ═══════════════════════════════════════════════════ */
+  function openFullscreen() {
+    document.getElementById('fs-overlay').classList.add('open');
+  }
+  function closeFullscreen() {
+    document.getElementById('fs-overlay').classList.remove('open');
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeFullscreen();
+  });
+
+  /* ═══════════════════════════════════════════════════
+     REFRESH LOG & STATS (AJAX)
+  ═══════════════════════════════════════════════════ */
+  async function refreshLog() {
+    try {
+      const res  = await fetch("{% url 'attendance:otp_list_json' %}");
+      const data = await res.json();
+      const tbody = document.getElementById('otp-log-tbody');
+      if (!data.otps || !data.otps.length) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;padding:1.5rem;color:var(--gray-400);">No OTPs yet today.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = data.otps.map((otp, i) => `
+        <tr ${i === 0 ? 'class="current-row"' : ''}>
+          <td><code style="font-size:.88rem;font-weight:800;letter-spacing:.12em;color:var(--blue-800);">${otp.code}</code></td>
+          <td><span class="badge ${otp.employee ? 'badge-blue' : 'badge-gold'}" style="font-size:.68rem;">${otp.employee ? 'Specific' : 'Global'}</span></td>
+          <td>${otp.created_at}</td>
+          <td>${otp.expires_at}</td>
+          <td><span class="status-dot ${otp.status}"></span>${otp.status.charAt(0).toUpperCase()+otp.status.slice(1)}</td>
+        </tr>`
+      ).join('');
+    } catch(e) { console.error('Log refresh error', e); }
+  }
+
+  async function refreshStats() {
+    try {
+      const res  = await fetch("{% url 'attendance:otp_stats_json' %}");
+      const data = await res.json();
+      document.getElementById('stat-total').textContent   = data.total_today;
+      document.getElementById('stat-used').textContent    = data.used_today;
+      document.getElementById('stat-active').textContent  = data.active_now;
+      document.getElementById('stat-expired').textContent = data.expired_today;
+    } catch(e) { console.error('Stats refresh error', e); }
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,984 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Payroll Report & Payslips{% endblock %}
+{% block page_title %}Payroll Report & Payslips{% endblock %}
+{% block breadcrumb %}Payroll › Reports & Payslips{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-gold btn-sm" onclick="confirmAllPayroll()" id="btn-confirm-all">
+    ✅ Confirm All
+  </button>
+  <button class="btn btn-outline btn-sm" style="color:var(--white);border-color:rgba(255,255,255,.4);"
+          onclick="openBatchPrintModal()">
+    🖨 Batch Print
+  </button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  /* ── Period Selector Bar ── */
+  .period-selector {
+    background: var(--white);
+    border: 1px solid var(--gray-200);
+    border-radius: var(--radius-lg);
+    padding: 1rem 1.4rem;
+    display: flex; flex-wrap: wrap; gap: 1rem; align-items: center;
+    margin-bottom: 1.5rem;
+    box-shadow: var(--shadow-sm);
+  }
+  .period-selector label { font-size: .82rem; font-weight: 700; color: var(--gray-600); white-space: nowrap; }
+  .period-info {
+    margin-left: auto; display: flex; gap: .65rem; align-items: center; flex-wrap: wrap;
+  }
+  .period-chip {
+    padding: .3rem .85rem; border-radius: 20px; font-size: .78rem; font-weight: 700;
+    display: flex; align-items: center; gap: .35rem;
+  }
+
+  /* ── Summary Stats ── */
+  .pr-stats { display: grid; grid-template-columns: repeat(5,1fr); gap: 1rem; margin-bottom: 1.5rem; }
+  @media (max-width:1100px) { .pr-stats { grid-template-columns: repeat(3,1fr); } }
+  @media (max-width:640px)  { .pr-stats { grid-template-columns: repeat(2,1fr); } }
+
+  /* ── Toolbar ── */
+  .pr-toolbar {
+    display: flex; flex-wrap: wrap; gap: .75rem; align-items: center;
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-lg); padding: .85rem 1.25rem; margin-bottom: 1.25rem;
+  }
+  .pr-toolbar .search-bar { flex: 1; min-width: 200px; }
+  .selection-count {
+    font-size: .82rem; font-weight: 600; color: var(--blue-800);
+    background: var(--blue-50); padding: .3rem .75rem; border-radius: 20px;
+    display: none;
+  }
+  .selection-count.visible { display: block; }
+
+  /* ── Payroll Table ── */
+  .payroll-table-wrap { overflow-x: auto; }
+  table.payroll-table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+  table.payroll-table thead th {
+    padding: .7rem 1rem;
+    background: var(--blue-50); color: var(--blue-900);
+    font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+    text-align: left; border-bottom: 2px solid var(--blue-100); white-space: nowrap;
+  }
+  table.payroll-table thead th.num { text-align: right; }
+  table.payroll-table tbody tr { border-bottom: 1px solid var(--gray-100); transition: background .15s; }
+  table.payroll-table tbody tr:hover { background: var(--blue-50); }
+  table.payroll-table tbody tr.confirmed-row { background: #F0FDF4; }
+  table.payroll-table tbody tr.selected-row  { background: #EFF6FF; }
+  table.payroll-table tbody td { padding: .75rem 1rem; color: var(--gray-700); }
+  table.payroll-table tbody td.num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  table.payroll-table tfoot td {
+    padding: .75rem 1rem; font-weight: 800; background: var(--gray-50);
+    border-top: 2px solid var(--gray-300); font-size: .9rem;
+  }
+  table.payroll-table tfoot td.num { text-align: right; color: var(--blue-800); font-size: 1rem; }
+
+  .emp-cell { display: flex; align-items: center; gap: .7rem; }
+  .emp-av {
+    width: 34px; height: 34px; border-radius: 50%; flex-shrink: 0;
+    background: var(--blue-800); color: var(--white);
+    display: flex; align-items: center; justify-content: center;
+    font-size: .78rem; font-weight: 700;
+  }
+  .emp-av.confirmed { background: var(--success); }
+  .emp-name strong { display: block; font-size: .88rem; }
+  .emp-name span   { font-size: .72rem; color: var(--gray-400); }
+
+  /* Confirm toggle button */
+  .confirm-toggle {
+    display: inline-flex; align-items: center; gap: .35rem;
+    padding: .32rem .75rem; border-radius: 20px;
+    font-size: .75rem; font-weight: 700; cursor: pointer;
+    border: 1.5px solid; transition: all .2s; white-space: nowrap;
+    font-family: var(--font-display);
+  }
+  .confirm-toggle.unconfirmed {
+    background: var(--white); border-color: var(--gray-300); color: var(--gray-600);
+  }
+  .confirm-toggle.unconfirmed:hover { border-color: var(--success); color: var(--success); }
+  .confirm-toggle.confirmed {
+    background: #DCFCE7; border-color: #22C55E; color: #15803D;
+  }
+  .confirm-toggle.confirmed:hover { background: #FEE2E2; border-color: var(--danger); color: var(--danger); }
+
+  .row-actions { display: flex; gap: .35rem; flex-wrap: wrap; }
+
+  /* Checkbox column */
+  .cb-col { width: 40px; }
+  input[type="checkbox"].row-cb {
+    width: 16px; height: 16px; accent-color: var(--blue-700); cursor: pointer;
+  }
+
+  /* ── Payslip Preview Modal ── */
+  #payslip-modal .modal { width: min(680px, 96vw); max-height: 90vh; }
+
+  /* ── Payslip Print Layout ── */
+  .payslip {
+    font-family: 'Outfit', sans-serif;
+    background: var(--white);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .payslip-header {
+    background: var(--blue-900);
+    padding: 1.5rem 2rem;
+    display: flex; align-items: flex-start; justify-content: space-between;
+    gap: 1rem;
+  }
+  .payslip-company { color: var(--white); }
+  .payslip-company h2 { font-size: 1.2rem; font-weight: 800; margin-bottom: .2rem; }
+  .payslip-company p  { font-size: .78rem; color: rgba(255,255,255,.55); }
+  .payslip-title {
+    text-align: right; color: var(--white);
+  }
+  .payslip-title h3 { font-size: 1rem; font-weight: 700; color: var(--gold-400); }
+  .payslip-title p  { font-size: .78rem; color: rgba(255,255,255,.55); margin-top: .2rem; }
+
+  .payslip-employee-band {
+    background: var(--blue-50);
+    padding: 1rem 2rem;
+    display: grid; grid-template-columns: repeat(3,1fr); gap: 1rem;
+    border-bottom: 2px solid var(--blue-100);
+  }
+  .ps-field-label { font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--gray-400); margin-bottom: .2rem; }
+  .ps-field-val   { font-size: .88rem; font-weight: 700; color: var(--gray-800); }
+
+  .payslip-body { padding: 1.25rem 2rem; }
+  .ps-section-label {
+    font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em;
+    color: var(--blue-700); background: var(--blue-50);
+    padding: .3rem .65rem; border-radius: var(--radius-sm); margin-bottom: .65rem; display: inline-block;
+  }
+  .ps-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.25rem; }
+  table.ps-items { width: 100%; border-collapse: collapse; margin-bottom: .5rem; }
+  table.ps-items tbody tr { border-bottom: 1px dashed var(--gray-200); }
+  table.ps-items tbody td { padding: .4rem .35rem; font-size: .84rem; }
+  table.ps-items tbody td:last-child { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+  table.ps-items tfoot td {
+    padding: .45rem .35rem; font-weight: 800; font-size: .9rem;
+    border-top: 2px solid var(--gray-300);
+  }
+  table.ps-items tfoot td:last-child { text-align: right; }
+  .ps-earnings-total  { color: var(--success); }
+  .ps-deduction-total { color: var(--danger); }
+
+  .payslip-net-band {
+    background: var(--blue-900);
+    padding: 1rem 2rem;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .ps-net-label { color: rgba(255,255,255,.7); font-size: .85rem; font-weight: 600; }
+  .ps-net-amount { color: var(--gold-400); font-size: 1.6rem; font-weight: 900; font-variant-numeric: tabular-nums; }
+
+  .payslip-footer {
+    padding: 1rem 2rem;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 2rem;
+    border-top: 1px solid var(--gray-200);
+  }
+  .ps-sig-line {
+    border-top: 1.5px solid var(--gray-400);
+    margin-top: 2rem; padding-top: .35rem;
+    font-size: .72rem; color: var(--gray-500); text-align: center;
+  }
+
+  /* ── Batch Print Modal ── */
+  #batch-print-modal .modal { width: min(520px, 96vw); }
+  .batch-option {
+    display: flex; align-items: flex-start; gap: .85rem;
+    padding: 1rem; border: 1.5px solid var(--gray-200); border-radius: var(--radius-md);
+    cursor: pointer; transition: all .2s; margin-bottom: .65rem;
+  }
+  .batch-option:hover, .batch-option.selected { border-color: var(--blue-600); background: var(--blue-50); }
+  .batch-option input[type="radio"] { margin-top: .15rem; accent-color: var(--blue-700); flex-shrink: 0; }
+  .batch-option h4 { font-size: .9rem; font-weight: 700; color: var(--gray-800); margin-bottom: .2rem; }
+  .batch-option p  { font-size: .8rem; color: var(--gray-500); }
+
+  /* ── Confirm All Modal ── */
+  #confirm-all-modal .modal { max-width: 440px; }
+
+  /* ── Unconfirm Modal ── */
+  #unconfirm-modal .modal { max-width: 420px; }
+
+  /* ── Print styles ── */
+  @media print {
+    body * { visibility: hidden; }
+    #print-area, #print-area * { visibility: visible; }
+    #print-area {
+      position: fixed; inset: 0;
+      padding: 1.5cm;
+      background: white;
+    }
+    .payslip-header { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .payslip-net-band { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .no-print { display: none !important; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<!-- ── Period Selector ── -->
+<div class="period-selector">
+  <label for="period-select">Payroll Period:</label>
+  <select class="form-control" id="period-select" style="width:auto;"
+          onchange="window.location.href='?period_id='+this.value">
+    {% for period in payroll_periods %}
+    <option value="{{ period.id }}" {% if period == current_period %}selected{% endif %}>
+      {{ period.start_date|date:"M d, Y" }} – {{ period.end_date|date:"M d, Y" }}
+    </option>
+    {% endfor %}
+  </select>
+  <div class="period-info">
+    <span class="period-chip" style="background:var(--blue-100);color:var(--blue-800);">
+      📅 {{ current_period.start_date|date:"M d" }} – {{ current_period.end_date|date:"M d, Y" }}
+    </span>
+    <span class="period-chip
+      {% if current_period.status == 'closed' %}badge-success
+      {% elif current_period.status == 'open' %}badge-blue
+      {% else %}badge-warning{% endif %}">
+      {{ current_period.status|title }}
+    </span>
+  </div>
+</div>
+
+<!-- ── Stats ── -->
+<div class="pr-stats">
+  <div class="stat-card">
+    <div class="stat-icon blue">👥</div>
+    <div><div class="stat-num">{{ stats.total_employees }}</div><div class="stat-label">Employees</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon green">✅</div>
+    <div><div class="stat-num" id="stat-confirmed">{{ stats.confirmed }}</div><div class="stat-label">Confirmed</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon gold">⏳</div>
+    <div><div class="stat-num" id="stat-pending">{{ stats.pending }}</div><div class="stat-label">Pending</div></div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon" style="background:#DCFCE7;color:#15803D;">💵</div>
+    <div>
+      <div class="stat-num" style="font-size:1.2rem;">₱{{ stats.total_gross|floatformat:"0" }}</div>
+      <div class="stat-label">Total Gross Pay</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon" style="background:#FEF3C7;color:#B45309;">🏦</div>
+    <div>
+      <div class="stat-num" style="font-size:1.2rem;">₱{{ stats.total_net|floatformat:"0" }}</div>
+      <div class="stat-label">Total Net Pay</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Toolbar ── -->
+<div class="pr-toolbar">
+  <div class="search-bar">
+    <span class="search-icon">🔍</span>
+    <input type="text" id="pr-search" placeholder="Search by name, ID, department…" oninput="filterTable()">
+  </div>
+
+  <select class="form-control" id="filter-status" style="width:auto;" onchange="filterTable()">
+    <option value="">All Status</option>
+    <option value="confirmed">Confirmed</option>
+    <option value="pending">Pending / Draft</option>
+  </select>
+
+  <select class="form-control" id="filter-dept" style="width:auto;" onchange="filterTable()">
+    <option value="">All Departments</option>
+    {% for dept in departments %}
+    <option value="{{ dept.name }}">{{ dept.name }}</option>
+    {% endfor %}
+  </select>
+
+  <label style="display:flex;align-items:center;gap:.4rem;font-size:.84rem;font-weight:600;color:var(--gray-600);cursor:pointer;">
+    <input type="checkbox" id="select-all-cb" onchange="toggleSelectAll(this)" style="accent-color:var(--blue-700);width:16px;height:16px;">
+    Select All
+  </label>
+
+  <span class="selection-count" id="selection-count">0 selected</span>
+
+  <!-- Bulk actions (shown when selection > 0) -->
+  <div id="bulk-actions" style="display:none;display:flex;gap:.5rem;flex-wrap:wrap;">
+    <button class="btn btn-primary btn-sm" onclick="confirmSelected()">✅ Confirm Selected</button>
+    <button class="btn btn-outline btn-sm" onclick="printSelected()">🖨 Print Selected</button>
+  </div>
+</div>
+
+<!-- ── Payroll Table ── -->
+<div class="card">
+  <div class="card-header">
+    <h3>Payroll Register — {{ current_period.start_date|date:"M d" }} to {{ current_period.end_date|date:"M d, Y" }}</h3>
+    <div style="display:flex;gap:.5rem;">
+      <button class="btn btn-outline btn-sm" onclick="exportCSV()">⬇ Export CSV</button>
+      <button class="btn btn-primary btn-sm" onclick="printAll()">🖨 Print All</button>
+    </div>
+  </div>
+
+  <div class="payroll-table-wrap">
+    <table class="payroll-table" id="payroll-table">
+      <thead>
+        <tr>
+          <th class="cb-col"><input type="checkbox" id="th-cb" onchange="toggleSelectAll(this)" style="accent-color:var(--blue-700);width:16px;height:16px;"></th>
+          <th>Employee</th>
+          <th>Department</th>
+          <th>Grade</th>
+          <th class="num">Basic Pay</th>
+          <th class="num">Gross Pay</th>
+          <th class="num">Deductions</th>
+          <th class="num">Net Pay</th>
+          <th>Status</th>
+          <th style="min-width:220px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="payroll-tbody">
+        {% for payroll in payrolls %}
+        <tr class="pr-row {% if payroll.is_confirmed %}confirmed-row{% endif %}"
+            data-id="{{ payroll.id }}"
+            data-confirmed="{{ payroll.is_confirmed|lower }}"
+            data-dept="{{ payroll.employee.department.name|default:'' }}"
+            data-status="{% if payroll.is_confirmed %}confirmed{% else %}pending{% endif %}">
+
+          <td class="cb-col">
+            <input type="checkbox" class="row-cb" value="{{ payroll.id }}" onchange="updateSelection()">
+          </td>
+
+          <td>
+            <div class="emp-cell">
+              <div class="emp-av {% if payroll.is_confirmed %}confirmed{% endif %}">
+                {{ payroll.employee.first_name|slice:":1" }}{{ payroll.employee.last_name|slice:":1" }}
+              </div>
+              <div class="emp-name">
+                <strong>{{ payroll.employee.last_name }}, {{ payroll.employee.first_name }}</strong>
+                <span>{{ payroll.employee.employee_code }}</span>
+              </div>
+            </div>
+          </td>
+
+          <td>{{ payroll.employee.department.name|default:"—" }}</td>
+          <td>{{ payroll.employee.salary_grade.name|default:"—" }}</td>
+
+          <td class="num">₱{{ payroll.basic_pay|floatformat:"2" }}</td>
+          <td class="num" style="color:var(--success);">₱{{ payroll.gross_pay|floatformat:"2" }}</td>
+          <td class="num" style="color:var(--danger);">₱{{ payroll.total_deductions|floatformat:"2" }}</td>
+          <td class="num" style="color:var(--blue-800);font-size:.95rem;">
+            <strong>₱{{ payroll.net_pay|floatformat:"2" }}</strong>
+          </td>
+
+          <td>
+            <button class="confirm-toggle {% if payroll.is_confirmed %}confirmed{% else %}unconfirmed{% endif %}"
+                    id="confirm-btn-{{ payroll.id }}"
+                    onclick="toggleConfirm({{ payroll.id }}, this)">
+              {% if payroll.is_confirmed %}✓ Confirmed{% else %}○ Pending{% endif %}
+            </button>
+          </td>
+
+          <td>
+            <div class="row-actions">
+              <button class="btn btn-outline btn-sm" title="View Details"
+                      onclick="viewPayslip({{ payroll.id }})">
+                👁 View
+              </button>
+              <button class="btn btn-primary btn-sm" title="Print Payslip"
+                      onclick="printPayslip({{ payroll.id }})">
+                🖨 Print
+              </button>
+              {% if payroll.is_confirmed %}
+              <button class="btn btn-sm" style="background:#FEE2E2;color:#B91C1C;border:1px solid #FECACA;"
+                      title="Unconfirm" onclick="unconfirmPayroll({{ payroll.id }}, '{{ payroll.employee.first_name }} {{ payroll.employee.last_name }}')">
+                ✕ Unconfirm
+              </button>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="10" style="text-align:center;padding:3rem;color:var(--gray-400);">
+            <div style="font-size:2.5rem;margin-bottom:.75rem;">📋</div>
+            No payroll records for this period. Run payroll first.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+
+      <!-- Totals Footer -->
+      {% if payrolls %}
+      <tfoot>
+        <tr>
+          <td colspan="4" style="font-weight:800;color:var(--gray-700);">TOTALS</td>
+          <td class="num">₱{{ totals.basic_pay|floatformat:"2" }}</td>
+          <td class="num" style="color:var(--success);">₱{{ totals.gross_pay|floatformat:"2" }}</td>
+          <td class="num" style="color:var(--danger);">₱{{ totals.total_deductions|floatformat:"2" }}</td>
+          <td class="num" style="color:var(--blue-800);">₱{{ totals.net_pay|floatformat:"2" }}</td>
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  <div style="padding:1rem 1.5rem;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--gray-200);">
+    <span class="text-sm text-gray" id="row-count">
+      Showing {{ payrolls.count }} records
+    </span>
+    <div class="pagination">
+      {% if payrolls.has_previous %}
+        <a href="?period_id={{ current_period.id }}&page={{ payrolls.previous_page_number }}" class="page-btn">‹</a>
+      {% endif %}
+      {% for num in payrolls.paginator.page_range %}
+        {% if payrolls.number == num %}
+          <span class="page-btn active">{{ num }}</span>
+        {% elif num >= payrolls.number|add:"-2" and num <= payrolls.number|add:"2" %}
+          <a href="?period_id={{ current_period.id }}&page={{ num }}" class="page-btn">{{ num }}</a>
+        {% endif %}
+      {% endfor %}
+      {% if payrolls.has_next %}
+        <a href="?period_id={{ current_period.id }}&page={{ payrolls.next_page_number }}" class="page-btn">›</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+
+<!-- ══════════════════════════════════════════════════════
+     PAYSLIP PREVIEW MODAL
+══════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="payslip-modal">
+  <div class="modal">
+    <div class="modal-header no-print">
+      <h2>Payslip Preview</h2>
+      <div style="display:flex;gap:.5rem;">
+        <button class="btn btn-gold btn-sm" onclick="doPrintPayslip()">🖨 Print This Payslip</button>
+        <button class="btn-close" onclick="closeModal('payslip-modal')">✕</button>
+      </div>
+    </div>
+    <div class="modal-body" style="padding:0;" id="payslip-preview-body">
+      <!-- Populated dynamically -->
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     BATCH PRINT MODAL
+══════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="batch-print-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>🖨 Batch Print Payslips</h2>
+      <button class="btn-close" onclick="closeModal('batch-print-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="color:var(--gray-600);font-size:.88rem;margin-bottom:1.25rem;">
+        Choose which payslips to print. Selected items: <strong id="batch-selected-count">0</strong>
+      </p>
+
+      <label class="batch-option" id="batch-opt-selected" onclick="selectBatchOpt(this,'selected')">
+        <input type="radio" name="batch-type" value="selected">
+        <div>
+          <h4>🎯 Print Selected Only</h4>
+          <p>Prints only the employees you have checked in the table (<span id="batch-sel-num">0</span> selected).</p>
+        </div>
+      </label>
+
+      <label class="batch-option" id="batch-opt-confirmed" onclick="selectBatchOpt(this,'confirmed')">
+        <input type="radio" name="batch-type" value="confirmed">
+        <div>
+          <h4>✅ Print Confirmed Only</h4>
+          <p>Prints payslips for all employees with confirmed payroll status (<span id="batch-conf-num">{{ stats.confirmed }}</span> employees).</p>
+        </div>
+      </label>
+
+      <label class="batch-option" id="batch-opt-all" onclick="selectBatchOpt(this,'all')">
+        <input type="radio" name="batch-type" value="all" checked>
+        <div>
+          <h4>📋 Print All</h4>
+          <p>Prints payslips for all {{ stats.total_employees }} employees in this payroll period.</p>
+        </div>
+      </label>
+
+      <div style="background:var(--gold-100);border:1px solid #E5C000;border-radius:var(--radius-sm);padding:.75rem 1rem;font-size:.8rem;color:var(--gray-700);margin-top:.75rem;">
+        ⚠ Large batches will open in a new print dialog. Make sure your browser allows popups.
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('batch-print-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="executeBatchPrint()">🖨 Print Now</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     CONFIRM ALL MODAL
+══════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="confirm-all-modal">
+  <div class="modal">
+    <div class="modal-header"><h2>Confirm All Payroll</h2>
+      <button class="btn-close" onclick="closeModal('confirm-all-modal')">✕</button>
+    </div>
+    <div class="modal-body" style="text-align:center;padding:2rem 1.6rem;">
+      <div style="font-size:3.5rem;margin-bottom:1rem;">✅</div>
+      <h3 style="font-size:1.1rem;font-weight:800;color:var(--gray-800);margin-bottom:.5rem;">
+        Confirm All Payroll Records?
+      </h3>
+      <p style="color:var(--gray-600);font-size:.9rem;">
+        This will confirm payroll for <strong id="confirm-all-count">{{ stats.pending }}</strong> pending
+        employees in the current period. This action can be reversed individually.
+      </p>
+      <div style="margin-top:1.25rem;padding:.9rem;background:var(--blue-50);border-radius:var(--radius-md);font-size:.84rem;color:var(--blue-800);">
+        Period: <strong>{{ current_period.start_date|date:"M d" }} – {{ current_period.end_date|date:"M d, Y" }}</strong>
+      </div>
+    </div>
+    <div class="modal-footer" style="justify-content:center;gap:.75rem;">
+      <button class="btn btn-outline" onclick="closeModal('confirm-all-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="doConfirmAll()">✅ Yes, Confirm All</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     UNCONFIRM MODAL
+══════════════════════════════════════════════════════ -->
+<div class="modal-backdrop" id="unconfirm-modal">
+  <div class="modal">
+    <div class="modal-header"><h2>Unconfirm Payroll</h2>
+      <button class="btn-close" onclick="closeModal('unconfirm-modal')">✕</button>
+    </div>
+    <div class="modal-body" style="text-align:center;padding:2rem 1.6rem;">
+      <div style="font-size:3rem;margin-bottom:.75rem;">⚠️</div>
+      <p style="font-size:.95rem;color:var(--gray-700);">
+        Are you sure you want to unconfirm payroll for <strong id="unconfirm-emp-name"></strong>?
+      </p>
+      <p class="text-sm text-gray mt-2">The record will return to draft/pending status.</p>
+    </div>
+    <div class="modal-footer" style="justify-content:center;gap:.75rem;">
+      <button class="btn btn-outline" onclick="closeModal('unconfirm-modal')">Cancel</button>
+      <button class="btn btn-danger" id="do-unconfirm-btn">Unconfirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden print area -->
+<div id="print-area" style="display:none;"></div>
+
+<!-- ══════════════════════════════════════════════════════
+     JAVASCRIPT
+══════════════════════════════════════════════════════ -->
+<script>
+/* ─────────────────────────────────────────────────────────
+   DATA FROM DJANGO
+   payrollData is injected as a JSON object keyed by payroll ID
+   Each entry contains: employee info, earnings, deductions, breakdown
+───────────────────────────────────────────────────────── */
+const payrollData     = {{ payroll_json|safe|default:"{}" }};
+const companyName     = "{{ company_name|default:'Your Company' }}";
+const companyInitials = "{{ company_initials|default:'HR' }}";
+const periodLabel     = "{{ current_period.start_date|date:'M d' }} – {{ current_period.end_date|date:'M d, Y' }}";
+const periodId        = {{ current_period.id|default:0 }};
+
+/* ─────────────────────────────────────────────────────────
+   TABLE FILTER
+───────────────────────────────────────────────────────── */
+function filterTable() {
+  const q      = document.getElementById('pr-search').value.toLowerCase();
+  const status = document.getElementById('filter-status').value;
+  const dept   = document.getElementById('filter-dept').value;
+  let count = 0;
+  document.querySelectorAll('#payroll-tbody .pr-row').forEach(row => {
+    const text    = row.textContent.toLowerCase();
+    const rowStat = row.dataset.status;
+    const rowDept = row.dataset.dept;
+    const show = (!q      || text.includes(q))
+              && (!status || rowStat === status)
+              && (!dept   || rowDept === dept);
+    row.style.display = show ? '' : 'none';
+    if (show) count++;
+  });
+  document.getElementById('row-count').textContent = `Showing ${count} records`;
+}
+
+/* ─────────────────────────────────────────────────────────
+   SELECTION
+───────────────────────────────────────────────────────── */
+function toggleSelectAll(cb) {
+  const checked = cb.checked;
+  document.querySelectorAll('.row-cb').forEach(c => {
+    const row = c.closest('tr');
+    if (row.style.display !== 'none') {
+      c.checked = checked;
+      row.classList.toggle('selected-row', checked);
+    }
+  });
+  // Sync both checkboxes
+  document.getElementById('select-all-cb').checked = checked;
+  document.getElementById('th-cb').checked = checked;
+  updateSelection();
+}
+
+function updateSelection() {
+  const selected = [...document.querySelectorAll('.row-cb:checked')];
+  const count    = selected.length;
+  const countEl  = document.getElementById('selection-count');
+  const bulkEl   = document.getElementById('bulk-actions');
+  countEl.textContent = `${count} selected`;
+  countEl.classList.toggle('visible', count > 0);
+  bulkEl.style.display = count > 0 ? 'flex' : 'none';
+  document.getElementById('batch-sel-num').textContent = count;
+  document.getElementById('batch-selected-count').textContent = count;
+  // Sync header checkbox state
+  const all = document.querySelectorAll('.row-cb').length;
+  document.getElementById('th-cb').indeterminate = count > 0 && count < all;
+  document.getElementById('th-cb').checked = count === all && all > 0;
+  document.getElementById('select-all-cb').checked = count === all && all > 0;
+}
+
+function getSelectedIds() {
+  return [...document.querySelectorAll('.row-cb:checked')].map(c => parseInt(c.value));
+}
+
+/* ─────────────────────────────────────────────────────────
+   CONFIRM / UNCONFIRM
+───────────────────────────────────────────────────────── */
+async function toggleConfirm(payrollId, btn) {
+  const isConfirmed = btn.classList.contains('confirmed');
+  if (isConfirmed) {
+    // Clicking "confirmed" → ask to unconfirm
+    const data = payrollData[payrollId];
+    unconfirmPayroll(payrollId, data ? `${data.first_name} ${data.last_name}` : 'this employee');
+    return;
+  }
+  // Confirm
+  await setConfirmStatus([payrollId], true);
+}
+
+async function setConfirmStatus(ids, confirmed) {
+  try {
+    const res = await apiPost("{% url 'payroll:confirm_payroll' %}", {
+      payroll_ids: ids,
+      confirmed:   confirmed,
+      period_id:   periodId,
+    });
+    if (res.ok) {
+      ids.forEach(id => {
+        const row = document.querySelector(`tr[data-id="${id}"]`);
+        const btn = document.getElementById(`confirm-btn-${id}`);
+        const av  = row?.querySelector('.emp-av');
+        if (confirmed) {
+          btn?.classList.replace('unconfirmed', 'confirmed');
+          if (btn) btn.textContent = '✓ Confirmed';
+          row?.classList.add('confirmed-row');
+          row?.setAttribute('data-confirmed', 'true');
+          row?.setAttribute('data-status', 'confirmed');
+          av?.classList.add('confirmed');
+        } else {
+          btn?.classList.replace('confirmed', 'unconfirmed');
+          if (btn) btn.textContent = '○ Pending';
+          row?.classList.remove('confirmed-row');
+          row?.setAttribute('data-confirmed', 'false');
+          row?.setAttribute('data-status', 'pending');
+          av?.classList.remove('confirmed');
+        }
+      });
+      updateStatCounters();
+      showToast(confirmed ? `${ids.length} payroll record(s) confirmed.` : 'Payroll unconfirmed.', 'success');
+    } else {
+      showToast(res.error || 'Error updating payroll status.', 'error');
+    }
+  } catch (e) {
+    showToast('Server error. Please try again.', 'error');
+  }
+}
+
+function confirmSelected() {
+  const ids = getSelectedIds();
+  if (!ids.length) { showToast('No employees selected.', 'info'); return; }
+  setConfirmStatus(ids, true);
+}
+
+function confirmAllPayroll() {
+  const pending = document.querySelectorAll('tr[data-status="pending"]').length;
+  document.getElementById('confirm-all-count').textContent = pending;
+  openModal('confirm-all-modal');
+}
+
+function doConfirmAll() {
+  closeModal('confirm-all-modal');
+  const allIds = [...document.querySelectorAll('#payroll-tbody .pr-row')]
+    .map(r => parseInt(r.dataset.id));
+  setConfirmStatus(allIds, true);
+}
+
+function unconfirmPayroll(id, name) {
+  document.getElementById('unconfirm-emp-name').textContent = name;
+  document.getElementById('do-unconfirm-btn').onclick = async () => {
+    closeModal('unconfirm-modal');
+    await setConfirmStatus([id], false);
+  };
+  openModal('unconfirm-modal');
+}
+
+function updateStatCounters() {
+  const confirmed = document.querySelectorAll('tr[data-status="confirmed"]').length;
+  const pending   = document.querySelectorAll('tr[data-status="pending"]').length;
+  document.getElementById('stat-confirmed').textContent = confirmed;
+  document.getElementById('stat-pending').textContent   = pending;
+  document.getElementById('confirm-all-count').textContent = pending;
+}
+
+/* ─────────────────────────────────────────────────────────
+   PAYSLIP VIEW & PRINT
+───────────────────────────────────────────────────────── */
+function fmt(n) {
+  return (parseFloat(n) || 0).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+function buildPayslipHTML(data, forPrint = false) {
+  const earnings   = (data.breakdown || []).filter(b => b.type === 'earning');
+  const deductions = (data.breakdown || []).filter(b => b.type === 'deduction');
+
+  const earningsRows = earnings.map(e =>
+    `<tr><td>${e.name}</td><td>₱${fmt(e.amount)}</td></tr>`
+  ).join('') || '<tr><td>Basic Pay</td><td>₱${fmt(data.basic_pay)}</td></tr>';
+
+  const deductionRows = deductions.map(d =>
+    `<tr><td>${d.name}</td><td style="color:var(--danger);">₱${fmt(d.amount)}</td></tr>`
+  ).join('') || '<tr><td colspan="2" style="color:var(--gray-400);font-style:italic;">No deductions</td></tr>';
+
+  return `
+  <div class="payslip" id="current-payslip">
+    <div class="payslip-header">
+      <div class="payslip-company">
+        <h2>${companyName}</h2>
+        <p>HR Management System</p>
+      </div>
+      <div class="payslip-title">
+        <h3>PAYSLIP</h3>
+        <p>${periodLabel}</p>
+        <p style="margin-top:.3rem;font-size:.72rem;color:rgba(255,255,255,.4);">
+          Generated: ${new Date().toLocaleDateString('en-PH',{month:'short',day:'numeric',year:'numeric'})}
+        </p>
+      </div>
+    </div>
+
+    <div class="payslip-employee-band">
+      <div>
+        <div class="ps-field-label">Employee Name</div>
+        <div class="ps-field-val">${data.last_name}, ${data.first_name}</div>
+      </div>
+      <div>
+        <div class="ps-field-label">Employee ID</div>
+        <div class="ps-field-val">${data.employee_code}</div>
+      </div>
+      <div>
+        <div class="ps-field-label">Department</div>
+        <div class="ps-field-val">${data.department || '—'}</div>
+      </div>
+      <div>
+        <div class="ps-field-label">Position</div>
+        <div class="ps-field-val">${data.position || '—'}</div>
+      </div>
+      <div>
+        <div class="ps-field-label">Salary Grade</div>
+        <div class="ps-field-val">${data.salary_grade || '—'}</div>
+      </div>
+      <div>
+        <div class="ps-field-label">Employment Type</div>
+        <div class="ps-field-val">${(data.employment_type || 'Regular').charAt(0).toUpperCase() + (data.employment_type||'regular').slice(1)}</div>
+      </div>
+    </div>
+
+    <div class="payslip-body">
+      <div class="ps-cols">
+        <!-- Earnings -->
+        <div>
+          <span class="ps-section-label">💵 Earnings</span>
+          <table class="ps-items">
+            <tbody>
+              <tr><td>Basic Pay</td><td>₱${fmt(data.basic_pay)}</td></tr>
+              ${earningsRows}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td class="ps-earnings-total">Total Earnings</td>
+                <td class="ps-earnings-total">₱${fmt(data.gross_pay)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+        <!-- Deductions -->
+        <div>
+          <span class="ps-section-label">📉 Deductions</span>
+          <table class="ps-items">
+            <tbody>${deductionRows}</tbody>
+            <tfoot>
+              <tr>
+                <td class="ps-deduction-total">Total Deductions</td>
+                <td class="ps-deduction-total">₱${fmt(data.total_deductions)}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </div>
+
+      <!-- Attendance Summary -->
+      ${data.attendance ? `
+      <span class="ps-section-label">📋 Attendance Summary</span>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;margin-bottom:1.25rem;">
+        <div style="background:var(--gray-50);padding:.65rem .9rem;border-radius:var(--radius-sm);text-align:center;">
+          <div style="font-size:1.1rem;font-weight:800;">${data.attendance.days_present || 0}</div>
+          <div style="font-size:.7rem;color:var(--gray-400);">Days Present</div>
+        </div>
+        <div style="background:var(--gray-50);padding:.65rem .9rem;border-radius:var(--radius-sm);text-align:center;">
+          <div style="font-size:1.1rem;font-weight:800;">${data.attendance.days_absent || 0}</div>
+          <div style="font-size:.7rem;color:var(--gray-400);">Days Absent</div>
+        </div>
+        <div style="background:var(--gray-50);padding:.65rem .9rem;border-radius:var(--radius-sm);text-align:center;">
+          <div style="font-size:1.1rem;font-weight:800;">${data.attendance.late_days || 0}</div>
+          <div style="font-size:.7rem;color:var(--gray-400);">Late Days</div>
+        </div>
+        <div style="background:var(--gray-50);padding:.65rem .9rem;border-radius:var(--radius-sm);text-align:center;">
+          <div style="font-size:1.1rem;font-weight:800;">${data.attendance.ot_hours || 0}h</div>
+          <div style="font-size:.7rem;color:var(--gray-400);">OT Hours</div>
+        </div>
+      </div>` : ''}
+    </div>
+
+    <div class="payslip-net-band">
+      <div>
+        <div class="ps-net-label">Net Pay for Period</div>
+        <div style="font-size:.75rem;color:rgba(255,255,255,.4);">${periodLabel}</div>
+      </div>
+      <div class="ps-net-amount">₱${fmt(data.net_pay)}</div>
+    </div>
+
+    <div class="payslip-footer">
+      <div>
+        <div class="ps-sig-line">Employee's Signature over Printed Name</div>
+      </div>
+      <div>
+        <div class="ps-sig-line">Authorized by / HR Manager</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+let currentPrintPayrollId = null;
+
+function viewPayslip(payrollId) {
+  const data = payrollData[payrollId];
+  if (!data) {
+    showToast('Payslip data not available. Please reload.', 'error');
+    return;
+  }
+  currentPrintPayrollId = payrollId;
+  document.getElementById('payslip-preview-body').innerHTML = buildPayslipHTML(data);
+  openModal('payslip-modal');
+}
+
+function printPayslip(payrollId) {
+  const data = payrollData[payrollId];
+  if (!data) { showToast('Payslip data not available.', 'error'); return; }
+  currentPrintPayrollId = payrollId;
+  const pa = document.getElementById('print-area');
+  pa.style.display = 'block';
+  pa.innerHTML = buildPayslipHTML(data, true);
+  setTimeout(() => {
+    window.print();
+    pa.style.display = 'none';
+    pa.innerHTML = '';
+  }, 120);
+}
+
+function doPrintPayslip() {
+  if (currentPrintPayrollId) {
+    closeModal('payslip-modal');
+    printPayslip(currentPrintPayrollId);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────
+   BATCH PRINT
+───────────────────────────────────────────────────────── */
+let batchPrintMode = 'all';
+
+function openBatchPrintModal() {
+  updateSelection();
+  openModal('batch-print-modal');
+  selectBatchOpt(document.getElementById('batch-opt-all'), 'all');
+}
+
+function selectBatchOpt(el, mode) {
+  document.querySelectorAll('.batch-option').forEach(o => o.classList.remove('selected'));
+  el.classList.add('selected');
+  el.querySelector('input[type="radio"]').checked = true;
+  batchPrintMode = mode;
+}
+
+function executeBatchPrint() {
+  closeModal('batch-print-modal');
+  let ids = [];
+  if (batchPrintMode === 'selected') {
+    ids = getSelectedIds();
+    if (!ids.length) { showToast('No employees selected.', 'info'); return; }
+  } else if (batchPrintMode === 'confirmed') {
+    ids = [...document.querySelectorAll('tr[data-status="confirmed"]')].map(r => parseInt(r.dataset.id));
+    if (!ids.length) { showToast('No confirmed payrolls found.', 'info'); return; }
+  } else {
+    ids = Object.keys(payrollData).map(Number);
+  }
+  doBatchPrint(ids);
+}
+
+function doBatchPrint(ids) {
+  const pa = document.getElementById('print-area');
+  pa.style.display = 'block';
+  let html = `
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&display=swap');
+      * { box-sizing:border-box; margin:0; padding:0; }
+      body { font-family:'Outfit',sans-serif; }
+      .payslip-page { page-break-after: always; padding: 1.5cm; }
+      .payslip-page:last-child { page-break-after: avoid; }
+    </style>
+  `;
+  ids.forEach(id => {
+    const data = payrollData[id];
+    if (data) {
+      html += `<div class="payslip-page">${buildPayslipHTML(data, true)}</div>`;
+    }
+  });
+  pa.innerHTML = html;
+  setTimeout(() => {
+    window.print();
+    pa.style.display = 'none';
+    pa.innerHTML = '';
+  }, 200);
+}
+
+function printSelected() {
+  const ids = getSelectedIds();
+  if (!ids.length) { showToast('No employees selected.', 'info'); return; }
+  doBatchPrint(ids);
+}
+
+function printAll() {
+  const ids = Object.keys(payrollData).map(Number);
+  if (!ids.length) { showToast('No payroll data available.', 'info'); return; }
+  openBatchPrintModal();
+  selectBatchOpt(document.getElementById('batch-opt-all'), 'all');
+}
+
+/* ─────────────────────────────────────────────────────────
+   CSV EXPORT
+───────────────────────────────────────────────────────── */
+function exportCSV() {
+  window.location.href = `{% url 'payroll:export_payroll' %}?period_id=${periodId}`;
+}
+</script>
+
+{% endblock %}

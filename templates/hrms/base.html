@@ -1,0 +1,54 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}HRMS{% endblock %} – {% block site_name %}HR Management System{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'css/base.css' %}" />
+  {% block extra_css %}{% endblock %}
+</head>
+<body>
+  {% block body %}{% endblock %}
+
+  <!-- Global Logout Confirmation Modal -->
+  <div class="modal-backdrop" id="logout-modal">
+    <div class="modal" style="max-width:400px">
+      <div class="modal-header">
+        <h2>Confirm Logout</h2>
+        <button class="btn-close" onclick="closeModal('logout-modal')">✕</button>
+      </div>
+      <div class="modal-body" style="text-align:center;padding:2rem 1.6rem;">
+        <div style="font-size:3rem;margin-bottom:1rem;">🚪</div>
+        <p style="font-size:1rem;color:var(--gray-600);">Are you sure you want to log out of the system?</p>
+      </div>
+      <div class="modal-footer" style="justify-content:center;gap:1rem;">
+        <button class="btn btn-outline" onclick="closeModal('logout-modal')">Cancel</button>
+        <button class="btn btn-danger" onclick="doLogout()">Yes, Logout</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Django Logout Form (POST) -->
+  <form id="logout-form" method="post" action="{% url 'accounts:logout' %}" style="display:none;">
+    {% csrf_token %}
+  </form>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Django Messages as Toasts -->
+  {% if messages %}
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      {% for msg in messages %}
+        showToast("{{ msg|escapejs }}", "{{ msg.tags|default:'info' }}");
+      {% endfor %}
+    });
+  </script>
+  {% endif %}
+
+  <script src="{% static 'js/base.js' %}"></script>
+  {% block extra_js %}{% endblock %}
+</body>
+</html>

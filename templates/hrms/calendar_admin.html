@@ -1,0 +1,454 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Company Calendar{% endblock %}
+{% block page_title %}Company Calendar{% endblock %}
+{% block breadcrumb %}Calendar{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-gold btn-sm" onclick="openModal('add-holiday-modal')">+ Add Holiday</button>
+  <button class="btn btn-outline btn-sm" style="color:var(--white);border-color:rgba(255,255,255,.4);" onclick="printCalendar()">🖨 Print</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .cal-layout { display: grid; grid-template-columns: 1fr 320px; gap: 1.25rem; align-items: start; }
+  @media (max-width: 960px) { .cal-layout { grid-template-columns: 1fr; } }
+
+  /* ── Full Calendar ── */
+  .full-calendar {
+    background: var(--white); border: 1px solid var(--gray-200);
+    border-radius: var(--radius-xl); overflow: hidden;
+    box-shadow: var(--shadow-sm);
+  }
+  .fc-header {
+    padding: 1.1rem 1.5rem;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 2px solid var(--blue-100);
+    background: var(--blue-50);
+  }
+  .fc-month-title { font-size: 1.2rem; font-weight: 800; color: var(--blue-900); }
+  .fc-nav { display: flex; gap: .4rem; align-items: center; }
+  .fc-nav button {
+    width: 36px; height: 36px; border: 1.5px solid var(--gray-300);
+    border-radius: var(--radius-sm); background: var(--white);
+    cursor: pointer; font-size: 1rem; display: flex; align-items: center; justify-content: center;
+    transition: all .15s;
+  }
+  .fc-nav button:hover { background: var(--blue-800); color: var(--white); border-color: var(--blue-800); }
+  .fc-today-btn {
+    padding: .4rem .9rem; border-radius: var(--radius-sm);
+    background: var(--blue-800); color: var(--white);
+    border: none; font-family: var(--font-display); font-size: .82rem; font-weight: 600;
+    cursor: pointer; transition: all .15s;
+  }
+  .fc-today-btn:hover { background: var(--blue-700); }
+
+  .fc-day-headers {
+    display: grid; grid-template-columns: repeat(7,1fr);
+    background: var(--gray-50); border-bottom: 1px solid var(--gray-200);
+  }
+  .fc-day-header {
+    padding: .55rem; text-align: center;
+    font-size: .73rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--gray-500);
+  }
+  .fc-day-header.weekend { color: var(--danger); }
+
+  .fc-grid { display: grid; grid-template-columns: repeat(7,1fr); }
+
+  .fc-cell {
+    min-height: 88px; padding: .45rem .55rem;
+    border: 1px solid var(--gray-100);
+    cursor: pointer; transition: background .15s; position: relative;
+    overflow: hidden;
+  }
+  .fc-cell:hover { background: var(--blue-50); }
+  .fc-cell.other-month { background: var(--gray-50); opacity: .55; }
+  .fc-cell.today { background: var(--blue-50); border-color: var(--blue-600); }
+  .fc-cell.today .fc-day-num { color: var(--blue-800); font-weight: 900; background: var(--blue-800); color: var(--white); border-radius: 50%; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: .82rem; }
+  .fc-cell.holiday-regular { background: #FFF9E0; }
+  .fc-cell.holiday-special { background: #EFF6FF; }
+  .fc-cell.holiday-rest    { background: #F9FAFB; }
+  .fc-cell.weekend .fc-day-num { color: var(--danger); }
+
+  .fc-day-num { font-size: .85rem; font-weight: 700; color: var(--gray-700); margin-bottom: .3rem; }
+
+  .fc-event {
+    font-size: .7rem; font-weight: 600; padding: .15rem .4rem;
+    border-radius: 3px; margin-bottom: .2rem;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    display: block;
+  }
+  .fc-event.regular-holiday  { background: #FEF3C7; color: #B45309; border-left: 2px solid #D97706; }
+  .fc-event.special-holiday  { background: #DBEAFE; color: #1E40AF; border-left: 2px solid #3B82F6; }
+  .fc-event.workday          { background: #DCFCE7; color: #15803D; border-left: 2px solid #22C55E; }
+  .fc-event.restday          { background: #F3F4F6; color: #6B7280; border-left: 2px solid #9CA3AF; }
+
+  /* ── Side Panel ── */
+  .side-panel { display: flex; flex-direction: column; gap: 1rem; }
+
+  .upcoming-list { display: flex; flex-direction: column; gap: .6rem; max-height: 380px; overflow-y: auto; }
+  .upcoming-item {
+    display: flex; gap: .75rem; padding: .7rem .9rem;
+    background: var(--gray-50); border-radius: var(--radius-md);
+    border-left: 3px solid var(--blue-600); font-size: .84rem;
+  }
+  .upcoming-item.regular { border-left-color: var(--gold-500); }
+  .upcoming-item.special { border-left-color: var(--blue-600); }
+  .upcoming-date { font-weight: 800; color: var(--gray-800); min-width: 42px; }
+  .upcoming-name { color: var(--gray-700); }
+  .upcoming-type { font-size: .72rem; color: var(--gray-400); }
+
+  /* ── Legend ── */
+  .cal-legend { display: flex; flex-direction: column; gap: .5rem; }
+  .legend-item { display: flex; align-items: center; gap: .6rem; font-size: .82rem; color: var(--gray-600); }
+  .legend-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+
+  /* ── Day Config Modal ── */
+  #day-config-modal .modal { width: min(460px, 96vw); }
+  .rate-examples { background: var(--blue-50); border-radius: var(--radius-sm); padding: .75rem; font-size: .8rem; color: var(--blue-800); margin-top: .75rem; }
+
+  /* Summary chips */
+  .summary-chips { display: flex; gap: .5rem; flex-wrap: wrap; padding: 1rem 1.5rem; border-bottom: 1px solid var(--gray-200); }
+  .chip {
+    padding: .3rem .8rem; border-radius: 20px;
+    font-size: .78rem; font-weight: 700;
+    display: flex; align-items: center; gap: .4rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="cal-layout">
+
+  <!-- ── Full Calendar ── -->
+  <div class="full-calendar">
+    <div class="fc-header">
+      <div class="fc-month-title" id="fc-month-title"></div>
+      <div class="fc-nav">
+        <button onclick="fcNav(-1)">‹</button>
+        <button class="fc-today-btn" onclick="fcGoToday()">Today</button>
+        <button onclick="fcNav(1)">›</button>
+      </div>
+    </div>
+
+    <!-- Summary chips -->
+    <div class="summary-chips">
+      <div class="chip" style="background:#FEF3C7;color:#B45309;">🎌 <span id="chip-rh">0</span> Regular Holidays</div>
+      <div class="chip" style="background:#DBEAFE;color:#1E40AF;">📅 <span id="chip-sh">0</span> Special Holidays</div>
+      <div class="chip" style="background:#DCFCE7;color:#15803D;">💼 <span id="chip-wd">0</span> Working Days</div>
+      <div class="chip" style="background:#F3F4F6;color:#6B7280;">😴 <span id="chip-rd">0</span> Rest Days</div>
+    </div>
+
+    <!-- Day headers -->
+    <div class="fc-day-headers">
+      <div class="fc-day-header weekend">Sun</div>
+      <div class="fc-day-header">Mon</div>
+      <div class="fc-day-header">Tue</div>
+      <div class="fc-day-header">Wed</div>
+      <div class="fc-day-header">Thu</div>
+      <div class="fc-day-header">Fri</div>
+      <div class="fc-day-header weekend">Sat</div>
+    </div>
+
+    <!-- Calendar grid -->
+    <div class="fc-grid" id="fc-grid"></div>
+  </div>
+
+  <!-- ── Side Panel ── -->
+  <div class="side-panel">
+
+    <!-- Legend -->
+    <div class="card">
+      <div class="card-header"><h3>Legend</h3></div>
+      <div class="card-body">
+        <div class="cal-legend">
+          <div class="legend-item"><div class="legend-swatch" style="background:#FEF3C7;border-left:3px solid #D97706;"></div>Regular Holiday (paid)</div>
+          <div class="legend-item"><div class="legend-swatch" style="background:#DBEAFE;border-left:3px solid #3B82F6;"></div>Special Holiday (configurable)</div>
+          <div class="legend-item"><div class="legend-swatch" style="background:#DCFCE7;border-left:3px solid #22C55E;"></div>Work Day</div>
+          <div class="legend-item"><div class="legend-swatch" style="background:#F3F4F6;border-left:3px solid #9CA3AF;"></div>Rest Day</div>
+          <div class="legend-item"><div class="legend-swatch" style="background:var(--blue-50);border:1.5px solid var(--blue-600);"></div>Today</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Upcoming Holidays -->
+    <div class="card">
+      <div class="card-header"><h3>Upcoming Holidays</h3></div>
+      <div class="card-body" style="padding:1rem;">
+        <div class="upcoming-list" id="upcoming-list">
+          {% for holiday in upcoming_holidays %}
+          <div class="upcoming-item {{ holiday.type }}">
+            <div class="upcoming-date">{{ holiday.date|date:"M d" }}</div>
+            <div>
+              <div class="upcoming-name">{{ holiday.description }}</div>
+              <div class="upcoming-type">{{ holiday.type|title }} Holiday — {% if holiday.is_paid %}Paid{% else %}Unpaid{% endif %}</div>
+            </div>
+          </div>
+          {% empty %}
+          <p class="text-sm text-gray" style="text-align:center;padding:1rem;">No upcoming holidays.</p>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+
+    <!-- This Month Summary -->
+    <div class="card">
+      <div class="card-header"><h3>This Month</h3></div>
+      <div class="card-body">
+        <div style="display:flex;flex-direction:column;gap:.6rem;font-size:.85rem;">
+          <div style="display:flex;justify-content:space-between;"><span class="text-gray">Working Days</span><strong id="sm-workdays">—</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span class="text-gray">Holidays</span><strong id="sm-holidays">—</strong></div>
+          <div style="display:flex;justify-content:space-between;"><span class="text-gray">Rest Days</span><strong id="sm-restdays">—</strong></div>
+          <hr class="divider">
+          <div style="display:flex;justify-content:space-between;"><span class="text-gray">Total Days</span><strong id="sm-total">—</strong></div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══ DAY CONFIG MODAL ══ -->
+<div class="modal-backdrop" id="day-config-modal">
+  <div class="modal">
+    <div class="modal-header">
+      <h2>Configure Day — <span id="config-date-label"></span></h2>
+      <button class="btn-close" onclick="closeModal('day-config-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="day-config-form" method="post" action="{% url 'calendar_app:configure_day' %}">
+        {% csrf_token %}
+        <input type="hidden" name="date" id="config-date-input">
+
+        <!-- type: CharField choices=['workday','holiday','special'] -->
+        <div class="form-group" style="margin-bottom:1rem;">
+          <label class="form-label">Day Type <span style="color:var(--danger)">*</span></label>
+          <select name="type" id="config-type" class="form-control" onchange="updateRateHint()">
+            <option value="workday">💼 Work Day</option>
+            <option value="regular_holiday">🎌 Regular Holiday</option>
+            <option value="special_holiday">📅 Special Holiday</option>
+            <option value="rest">😴 Rest Day</option>
+          </select>
+        </div>
+
+        <!-- is_paid: BooleanField -->
+        <div class="form-group" style="margin-bottom:1rem;" id="paid-group">
+          <label class="form-label">Pay Policy</label>
+          <select name="is_paid" class="form-control">
+            <option value="true">Paid</option>
+            <option value="false">Unpaid / No Pay</option>
+          </select>
+        </div>
+
+        <!-- Pay Rate Multiplier — part of Adjustment model / PayrollComponent logic -->
+        <div class="form-group" style="margin-bottom:1rem;" id="rate-group">
+          <label class="form-label">Pay Rate Multiplier</label>
+          <input type="number" name="rate_multiplier" id="config-rate" class="form-control"
+                 step="0.01" min="1" max="5" value="1.00" placeholder="e.g. 2.00 for double pay">
+          <div class="rate-examples" id="rate-hint">
+            <strong>Common rates:</strong> Regular Holiday = 2.0× | Special Holiday = 1.3× | Work Day = 1.0×
+          </div>
+        </div>
+
+        <!-- description: CharField -->
+        <div class="form-group">
+          <label class="form-label">Description / Event Name</label>
+          <input type="text" name="description" id="config-description" class="form-control" placeholder="e.g. Christmas Day, Foundation Day…">
+        </div>
+
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" id="remove-config-btn" onclick="removeConfig()" style="margin-right:auto;">🗑 Remove</button>
+      <button class="btn btn-outline" onclick="closeModal('day-config-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveDayConfig()">💾 Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ ADD HOLIDAY MODAL ══ -->
+<div class="modal-backdrop" id="add-holiday-modal">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header"><h2>Add Holiday</h2><button class="btn-close" onclick="closeModal('add-holiday-modal')">✕</button></div>
+    <div class="modal-body">
+      <form id="add-holiday-form" method="post" action="{% url 'calendar_app:add_holiday' %}">
+        {% csrf_token %}
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Date</label>
+          <input type="date" name="date" class="form-control" required>
+        </div>
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Holiday Name</label>
+          <input type="text" name="description" class="form-control" placeholder="National Heroes Day" required>
+        </div>
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Type</label>
+          <select name="type" class="form-control">
+            <option value="regular_holiday">Regular Holiday (200% pay)</option>
+            <option value="special_holiday">Special Non-Working Day (130% pay)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Pay Rate Multiplier</label>
+          <input type="number" name="rate_multiplier" class="form-control" step="0.01" value="2.00" min="1" max="5">
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('add-holiday-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="document.getElementById('add-holiday-form').submit()">💾 Save Holiday</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Calendar data injected from Django view
+  // calendarData = { "YYYY-MM-DD": { type, description, is_paid, rate_multiplier }, ... }
+  const calendarData = {{ calendar_json|safe|default:"{}" }};
+
+  let fcYear, fcMonth;
+
+  function initCalendar() {
+    const now = new Date();
+    fcYear  = now.getFullYear();
+    fcMonth = now.getMonth();
+    renderFC();
+  }
+
+  function fcNav(dir) {
+    fcMonth += dir;
+    if (fcMonth > 11) { fcMonth = 0; fcYear++; }
+    if (fcMonth < 0)  { fcMonth = 11; fcYear--; }
+    renderFC();
+  }
+
+  function fcGoToday() {
+    const now = new Date();
+    fcYear  = now.getFullYear();
+    fcMonth = now.getMonth();
+    renderFC();
+  }
+
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+  function renderFC() {
+    document.getElementById('fc-month-title').textContent = `${monthNames[fcMonth]} ${fcYear}`;
+    const grid = document.getElementById('fc-grid');
+    grid.innerHTML = '';
+
+    const firstDay    = new Date(fcYear, fcMonth, 1).getDay();
+    const daysInMonth = new Date(fcYear, fcMonth + 1, 0).getDate();
+    const today       = new Date();
+
+    let rh=0, sh=0, wd=0, rd=0;
+
+    for (let i = 0; i < firstDay; i++) {
+      const cell = document.createElement('div');
+      cell.className = 'fc-cell other-month';
+      grid.appendChild(cell);
+    }
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = `${fcYear}-${String(fcMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const dow     = new Date(fcYear, fcMonth, d).getDay(); // 0=Sun, 6=Sat
+      const isWeekend = (dow === 0 || dow === 6);
+      const entry   = calendarData[dateStr] || null;
+      const isToday = (today.getFullYear()===fcYear && today.getMonth()===fcMonth && today.getDate()===d);
+
+      const cell = document.createElement('div');
+      cell.className = 'fc-cell';
+      if (isWeekend) cell.classList.add('weekend');
+      if (isToday)   cell.classList.add('today');
+
+      if (entry) {
+        if (entry.type === 'regular_holiday')  { cell.classList.add('holiday-regular'); rh++; }
+        else if (entry.type === 'special_holiday') { cell.classList.add('holiday-special'); sh++; }
+        else if (entry.type === 'rest')        { cell.classList.add('holiday-rest'); rd++; }
+        else                                   { wd++; }
+      } else {
+        if (!isWeekend) wd++; else rd++;
+      }
+
+      const numEl = document.createElement('div');
+      numEl.className = 'fc-day-num'; numEl.textContent = d; cell.appendChild(numEl);
+
+      if (entry) {
+        const ev = document.createElement('span');
+        ev.className = `fc-event ${entry.type}`;
+        ev.textContent = entry.description || entry.type.replace('_',' ');
+        cell.appendChild(ev);
+        if (entry.rate_multiplier && entry.rate_multiplier !== 1) {
+          const rate = document.createElement('span');
+          rate.style.cssText = 'font-size:.65rem;color:var(--gray-400);display:block;';
+          rate.textContent = `${entry.rate_multiplier}× pay`;
+          cell.appendChild(rate);
+        }
+      }
+
+      cell.onclick = () => openDayConfig(dateStr, entry);
+      grid.appendChild(cell);
+    }
+
+    // Update chips
+    document.getElementById('chip-rh').textContent = rh;
+    document.getElementById('chip-sh').textContent = sh;
+    document.getElementById('chip-wd').textContent = wd;
+    document.getElementById('chip-rd').textContent = rd;
+    document.getElementById('sm-workdays').textContent = wd;
+    document.getElementById('sm-holidays').textContent = rh + sh;
+    document.getElementById('sm-restdays').textContent = rd;
+    document.getElementById('sm-total').textContent = daysInMonth;
+  }
+
+  function openDayConfig(dateStr, existing) {
+    document.getElementById('config-date-label').textContent = new Date(dateStr + 'T00:00:00').toLocaleDateString('en-US', {weekday:'long',month:'long',day:'numeric',year:'numeric'});
+    document.getElementById('config-date-input').value = dateStr;
+    if (existing) {
+      document.getElementById('config-type').value        = existing.type || 'workday';
+      document.getElementById('config-rate').value        = existing.rate_multiplier || '1.00';
+      document.getElementById('config-description').value = existing.description || '';
+    } else {
+      document.getElementById('config-type').value        = 'workday';
+      document.getElementById('config-rate').value        = '1.00';
+      document.getElementById('config-description').value = '';
+    }
+    updateRateHint();
+    openModal('day-config-modal');
+  }
+
+  function updateRateHint() {
+    const type = document.getElementById('config-type').value;
+    const presets = {
+      workday:          { rate: '1.00', hint: 'Regular working day — standard pay (1.0×).' },
+      regular_holiday:  { rate: '2.00', hint: 'Regular Holiday — employees receive 200% pay (2.0×).' },
+      special_holiday:  { rate: '1.30', hint: 'Special Non-Working Day — 130% pay (1.3×) if worked.' },
+      rest:             { rate: '1.00', hint: 'Rest day — no pay unless employee works.' },
+    };
+    const p = presets[type] || presets.workday;
+    document.getElementById('config-rate').value = p.rate;
+    document.getElementById('rate-hint').textContent = p.hint;
+  }
+
+  function saveDayConfig() {
+    document.getElementById('day-config-form').submit();
+  }
+
+  function removeConfig() {
+    if (confirm('Remove configuration for this date (revert to default)?')) {
+      const form = document.createElement('form');
+      form.method = 'post';
+      form.action = "{% url 'calendar_app:remove_day' %}";
+      form.innerHTML = `{% csrf_token %}<input name="date" value="${document.getElementById('config-date-input').value}">`;
+      document.body.appendChild(form);
+      form.submit();
+    }
+  }
+
+  function printCalendar() { window.print(); }
+
+  initCalendar();
+</script>
+{% endblock %}
