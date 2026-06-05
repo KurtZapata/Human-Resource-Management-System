@@ -21,12 +21,28 @@ class Position(models.Model):
 
 
 class SalaryGrade(models.Model):
+    """
+    hourly_rate is the PRIMARY input field.
+    base_salary is AUTO-COMPUTED as hourly_rate × 8 hrs × 22 days.
+    Payroll always uses hourly_rate × hours_worked — never base_salary directly.
+    """
     name          = models.CharField(max_length=100)
-    base_salary   = models.DecimalField(max_digits=10, decimal_places=2)
-    overtime_rate = models.DecimalField(max_digits=8, decimal_places=2)
+    hourly_rate   = models.DecimalField(max_digits=10, decimal_places=4, default=0)
+    overtime_rate = models.DecimalField(max_digits=10, decimal_places=4, default=0)
+    # base_salary kept as read-only computed reference (shown on UI only)
+    base_salary   = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     created_at    = models.DateTimeField(auto_now_add=True)
 
-    def __str__(self): return self.name
+    def save(self, *args, **kwargs):
+        import decimal
+        # Auto-compute base_salary from hourly_rate for reference/display
+        self.base_salary = (
+            decimal.Decimal(str(self.hourly_rate)) * 8 * 22
+        ).quantize(decimal.Decimal('0.01'))
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.name} (₱{self.hourly_rate}/hr)'
 
 
 class Employee(models.Model):

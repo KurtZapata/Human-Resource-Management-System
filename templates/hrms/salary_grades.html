@@ -50,7 +50,6 @@
 
 {% block content %}
 
-<!-- Stats -->
 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.5rem;">
   <div class="stat-card">
     <div class="stat-icon blue">📊</div>
@@ -60,9 +59,9 @@
     <div class="stat-icon green">💵</div>
     <div>
       <div class="stat-num" style="font-size:1.2rem;">
-        ₱{% for sg in salary_grades %}{% if forloop.last %}{{ sg.base_salary|floatformat:"0" }}{% endif %}{% endfor %}
+        ₱{% for sg in salary_grades %}{% if forloop.last %}{{ sg.hourly_rate|floatformat:"2" }}{% endif %}{% endfor %}
       </div>
-      <div class="stat-label">Highest Base Salary</div>
+      <div class="stat-label">Highest Hourly Rate</div>
     </div>
   </div>
   <div class="stat-card">
@@ -74,7 +73,6 @@
   </div>
 </div>
 
-<!-- Grade Cards -->
 <div class="grades-grid">
   {% for sg in salary_grades %}
   <div class="grade-card">
@@ -82,10 +80,10 @@
       <div class="grade-name">{{ sg.name }}</div>
       <span class="grade-emp-count">{{ sg.employees_count }} employee{{ sg.employees_count|pluralize }}</span>
     </div>
-    <div class="grade-salary">₱{{ sg.base_salary|floatformat:"2" }} <span>/month</span></div>
+    <div class="grade-salary">₱{{ sg.hourly_rate|floatformat:"2" }} <span>/hour</span></div>
     <div class="grade-ot">OT Rate: <strong>₱{{ sg.overtime_rate|floatformat:"2" }}/hr</strong></div>
     <div class="grade-actions">
-      <button class="btn btn-primary btn-sm" style="flex:1;" onclick="editGrade({{ sg.id }}, '{{ sg.name }}', '{{ sg.base_salary }}', '{{ sg.overtime_rate }}')">✏ Edit</button>
+      <button class="btn btn-primary btn-sm" style="flex:1;" onclick="editGrade({{ sg.id }}, '{{ sg.name }}', '{{ sg.hourly_rate }}', '{{ sg.overtime_rate }}')">✏ Edit</button>
       <button class="btn btn-danger btn-sm" onclick="deleteGrade({{ sg.id }}, '{{ sg.name }}', {{ sg.employees_count }})">🗑</button>
     </div>
   </div>
@@ -97,7 +95,6 @@
   {% endfor %}
 </div>
 
-<!-- Comparison Table -->
 {% if salary_grades %}
 <div class="card">
   <div class="card-header"><h3>Grade Comparison</h3></div>
@@ -106,10 +103,10 @@
       <thead>
         <tr>
           <th>Grade Name</th>
-          <th class="num">Base Salary / Month</th>
+          <th class="num">Hourly Rate</th>
           <th class="num">OT Rate / Hour</th>
-          <th class="num">Daily Rate (÷22)</th>
-          <th class="num">Hourly Rate (÷8)</th>
+          <th class="num">Daily Equiv (×8)</th>
+          <th class="num">Monthly Equiv (×176)</th>
           <th>Employees</th>
           <th>Actions</th>
         </tr>
@@ -118,16 +115,16 @@
         {% for sg in salary_grades %}
         <tr>
           <td><strong>{{ sg.name }}</strong></td>
-          <td class="num">₱{{ sg.base_salary|floatformat:"2" }}</td>
+          <td class="num">₱{{ sg.hourly_rate|floatformat:"2" }}</td>
           <td class="num">₱{{ sg.overtime_rate|floatformat:"2" }}</td>
-          <td class="num">₱{% widthratio sg.base_salary 22 1 %}.{{ sg.base_salary|floatformat:"0" }}</td>
-          <td class="num">₱{{ sg.overtime_rate|floatformat:"2" }}</td>
+          <td class="num">₱{% widthratio sg.hourly_rate 1 8 %}</td>
+          <td class="num">₱{% widthratio sg.hourly_rate 1 176 %}</td>
           <td>
             <span class="badge badge-blue">{{ sg.employees_count }}</span>
           </td>
           <td>
             <div style="display:flex;gap:.35rem;">
-              <button class="btn btn-primary btn-sm btn-icon" onclick="editGrade({{ sg.id }}, '{{ sg.name }}', '{{ sg.base_salary }}', '{{ sg.overtime_rate }}')">✏</button>
+              <button class="btn btn-primary btn-sm btn-icon" onclick="editGrade({{ sg.id }}, '{{ sg.name }}', '{{ sg.hourly_rate }}', '{{ sg.overtime_rate }}')">✏</button>
               <button class="btn btn-danger btn-sm btn-icon" onclick="deleteGrade({{ sg.id }}, '{{ sg.name }}', {{ sg.employees_count }})">🗑</button>
             </div>
           </td>
@@ -139,7 +136,6 @@
 </div>
 {% endif %}
 
-<!-- Add/Edit Modal -->
 <div class="modal-backdrop" id="add-grade-modal">
   <div class="modal" style="max-width:440px;">
     <div class="modal-header">
@@ -150,26 +146,44 @@
       <form id="grade-form" method="post" action="{% url 'employees:create_grade' %}">
         {% csrf_token %}
         <input type="hidden" id="grade-id" name="grade_id">
+        
         <div class="form-group" style="margin-bottom:.9rem;">
           <label class="form-label">Grade Name <span style="color:var(--danger)">*</span></label>
           <input type="text" name="name" id="grade-name" class="form-control"
                  placeholder="e.g. Grade 1, Junior Staff, Senior Manager" required>
         </div>
+
         <div class="form-group" style="margin-bottom:.9rem;">
-          <label class="form-label">Base Monthly Salary (₱) <span style="color:var(--danger)">*</span></label>
-          <input type="number" name="base_salary" id="grade-base" class="form-control"
-                 step="0.01" min="0" placeholder="18000.00" required oninput="calcRates()">
+          <label class="form-label">
+            Hourly Rate (₱/hr) <span style="color:var(--danger)">*</span>
+            <span style="font-size:.72rem;color:var(--gray-400);font-weight:400;margin-left:.35rem;">
+              Primary field — payroll is computed from this
+            </span>
+          </label>
+          <input type="number" name="hourly_rate" id="grade-hourly" class="form-control"
+                 step="0.0001" min="0" placeholder="e.g. 102.27" required
+                 oninput="previewGradeRates()">
         </div>
+
         <div class="form-group" style="margin-bottom:.9rem;">
-          <label class="form-label">Overtime Rate (₱/hr) <span style="color:var(--danger)">*</span></label>
+          <label class="form-label">
+            Overtime Rate (₱/hr) <span style="color:var(--danger)">*</span>
+          </label>
           <input type="number" name="overtime_rate" id="grade-ot" class="form-control"
-                 step="0.01" min="0" placeholder="112.50" required>
+                 step="0.0001" min="0" placeholder="Auto-suggested below" required>
         </div>
-        <!-- Auto-computed hints -->
-        <div style="background:var(--blue-50);border-radius:var(--radius-sm);padding:.75rem 1rem;font-size:.82rem;color:var(--blue-800);" id="rate-hints" style="display:none;">
-          <strong>Computed rates:</strong>
-          Daily: <span id="hint-daily">—</span> &nbsp;|&nbsp;
-          Hourly: <span id="hint-hourly">—</span>
+
+        <div id="grade-rate-preview"
+             style="background:var(--blue-50);border:1px solid var(--blue-100);
+                    border-radius:var(--radius-sm);padding:.75rem 1rem;
+                    font-size:.82rem;color:var(--blue-800);display:none;">
+          <strong>Computed values (for reference):</strong>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-top:.4rem;">
+            <div>Daily (×8 hrs): <strong id="preview-daily">—</strong></div>
+            <div>Monthly equiv (×22 days): <strong id="preview-monthly">—</strong></div>
+            <div>Suggested OT (×1.25): <strong id="preview-ot-suggest">—</strong></div>
+            <div>Base salary stored: <strong id="preview-base">—</strong></div>
+          </div>
         </div>
       </form>
     </div>
@@ -180,7 +194,6 @@
   </div>
 </div>
 
-<!-- Delete Confirm Modal -->
 <div class="modal-backdrop" id="delete-grade-modal">
   <div class="modal" style="max-width:380px;">
     <div class="modal-header"><h2>Delete Salary Grade</h2><button class="btn-close" onclick="closeModal('delete-grade-modal')">✕</button></div>
@@ -197,15 +210,14 @@
 </div>
 
 <script>
-  function editGrade(id, name, base, ot) {
+  function editGrade(id, name, hourly, ot) {
     document.getElementById('grade-modal-title').textContent = 'Edit Salary Grade';
-    document.getElementById('grade-id').value   = id;
-    document.getElementById('grade-name').value = name;
-    document.getElementById('grade-base').value = base;
-    document.getElementById('grade-ot').value   = ot;
-    calcRates();
-    // Point form to update URL
-    document.getElementById('grade-form').action = `/employees/salary-grades/${id}/update/`;
+    document.getElementById('grade-id').value     = id;
+    document.getElementById('grade-name').value   = name;
+    document.getElementById('grade-hourly').value = hourly;
+    document.getElementById('grade-ot').value     = ot;
+    document.getElementById('grade-form').action  = `/employees/salary-grades/${id}/update/`;
+    previewGradeRates();
     openModal('add-grade-modal');
   }
 
@@ -222,20 +234,23 @@
     openModal('delete-grade-modal');
   }
 
-  function calcRates() {
-    const base = parseFloat(document.getElementById('grade-base').value) || 0;
-    if (base > 0) {
-      const daily  = (base / 22).toFixed(2);
-      const hourly = (base / 22 / 8).toFixed(2);
-      document.getElementById('hint-daily').textContent  = `₱${daily}`;
-      document.getElementById('hint-hourly').textContent = `₱${hourly}`;
-      document.getElementById('rate-hints').style.display = '';
-      // Auto-suggest OT rate (125% of hourly)
-      const otSuggest = (base / 22 / 8 * 1.25).toFixed(2);
-      if (!document.getElementById('grade-ot').value) {
-        document.getElementById('grade-ot').value = otSuggest;
-      }
-    }
+  function previewGradeRates() {
+    const hr = parseFloat(document.getElementById('grade-hourly').value) || 0;
+    if (hr <= 0) { document.getElementById('grade-rate-preview').style.display='none'; return; }
+
+    const daily    = hr * 8;
+    const monthly  = daily * 22;
+    const otSuggest= hr * 1.25;
+
+    document.getElementById('preview-daily').textContent    = '₱' + daily.toFixed(2);
+    document.getElementById('preview-monthly').textContent  = '₱' + monthly.toFixed(2);
+    document.getElementById('preview-ot-suggest').textContent = '₱' + otSuggest.toFixed(4) + '/hr';
+    document.getElementById('preview-base').textContent    = '₱' + monthly.toFixed(2);
+    document.getElementById('grade-rate-preview').style.display = '';
+
+    // Auto-suggest OT rate if empty
+    const otField = document.getElementById('grade-ot');
+    if (!otField.value) otField.value = otSuggest.toFixed(4);
   }
 </script>
 {% endblock %}
