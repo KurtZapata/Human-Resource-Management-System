@@ -25,5 +25,6 @@ urlpatterns = [
     path('employee-login/',  views.employee_login,   name='employee_login'),
     path('employee-logout/', views.employee_logout,  name='employee_logout'),
     path('otp/stats-json/', views.otp_stats_json, name='otp_stats_json'),
+    path('admin/grant-overtime/', views.grant_overtime, name='grant_overtime'),
 
 ]

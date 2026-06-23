@@ -13,7 +13,6 @@ Key design notes:
 
 import json
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST, require_GET
@@ -22,7 +21,7 @@ from django.contrib import messages
 from django.utils import timezone
 from django.db import transaction
 from accounts.access import admin_required, is_super_admin, is_hr_admin
-from django.db.models import Q, Sum, Max
+from django.db.models import Q, Sum, Max, Count
 
 from .models import (
     PayrollComponent, PayrollPeriod, Payroll,
@@ -50,7 +49,6 @@ FORMULA_VARIABLES = [
 #  WEBPAGE #6 — Configurable Salary Page
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@admin_required
 def salary_components(request):
     # Seed defaults if no components exist yet
     _seed_default_components()
@@ -58,23 +56,22 @@ def salary_components(request):
     earnings   = PayrollComponent.objects.filter(type='earning').order_by('sort_order', 'id')
     deductions = PayrollComponent.objects.filter(type='deduction').order_by('sort_order', 'id')
 
-    from django.db.models import Count
     salary_grades = SalaryGrade.objects.annotate(employees_count=Count('employee'))
 
-    # Serialise for JS preview calculator
+    # ── Serialise for JS preview calculator (With safe getattr fallbacks) ──
     all_comps = []
     for c in PayrollComponent.objects.filter(is_active=True).order_by('sort_order', 'id'):
         all_comps.append({
             'id':               c.id,
             'name':             c.name,
             'type':             c.type,
-            'operator':         c.operator,
+            'operator':         getattr(c, 'operator', '+') or '+',
             'calculation_type': c.calculation_type,
             'default_value':    float(c.default_value) if c.default_value else 0.0,
-            'pct_base':         c.pct_base or 'basic_pay',
-            'formula':          c.formula or '',
-            'is_locked':        c.is_locked,
-            'description':      c.description or '',
+            'pct_base':         getattr(c, 'pct_base', 'monthly_equiv') or 'monthly_equiv',
+            'formula':          getattr(c, 'formula', '') or '',
+            'is_locked':        getattr(c, 'is_locked', False),
+            'description':      getattr(c, 'description', '') or '',
         })
 
     return render(request, 'hrms/salary_config.html', {
@@ -316,7 +313,6 @@ def run_payroll(request):
     all_periods = PayrollPeriod.objects.order_by('-start_date')
     open_periods = all_periods.filter(status='open')
 
-    from datetime import timedelta
     for p in all_periods:
         delta = (p.end_date - p.start_date).days + 1
         p.working_days = sum(
@@ -326,30 +322,31 @@ def run_payroll(request):
 
     period_id = request.GET.get('period_id') or request.POST.get('period_id')
     if period_id:
-        try:    default_period = PayrollPeriod.objects.get(pk=period_id)
-        except: default_period = open_periods.first()
+        try:    
+            default_period = PayrollPeriod.objects.get(pk=period_id)
+        except: 
+            default_period = open_periods.first()
     else:
         default_period = open_periods.first()
 
-    employees  = Employee.objects.filter(status='active').select_related('department','salary_grade')
+    employees = Employee.objects.filter(status='active').select_related('department', 'salary_grade')
     components = PayrollComponent.objects.filter(is_active=True).order_by('sort_order', 'id')
 
     missing_grades = employees.filter(salary_grade__isnull=True).count()
-    already_run    = Payroll.objects.filter(payroll_period=default_period).exists() if default_period else False
+    already_run = Payroll.objects.filter(payroll_period=default_period).exists() if default_period else False
 
     checks = {
-        'has_open_period':     open_periods.exists(),
-        'has_employees':       employees.exists(),
-        'all_have_grades':     missing_grades == 0,
+        'has_open_period':      open_periods.exists(),
+        'has_employees':        employees.exists(),
+        'all_have_grades':      missing_grades == 0,
         'some_missing_grades': 0 < missing_grades < employees.count(),
         'missing_grade_count': missing_grades,
-        'has_components':      components.exists(),
+        'has_components':       components.exists(),
         'attendance_imported': True,
-        'already_run':         already_run,
+        'already_run':          already_run,
     }
 
     estimated_gross = sum(
-        # Estimate based on hourly_rate × 8 hrs/day × 22 days
         (Decimal(str(e.salary_grade.hourly_rate)) * Decimal('176')
          if e.salary_grade else Decimal('0'))
         for e in employees
@@ -363,29 +360,134 @@ def run_payroll(request):
 
         with transaction.atomic():
             for emp in employees:
-                result = compute_employee_payroll(emp, period, components, request.user)
+                sg = emp.salary_grade
+                if not sg:
+                    continue  # Skip employees with no salary grade
+
+                hourly_rate   = Decimal(str(sg.hourly_rate))
+                ot_rate       = Decimal(str(sg.overtime_rate))
+                daily_rate    = hourly_rate * Decimal('8')
+                monthly_equiv = hourly_rate * Decimal('8') * Decimal('22')
+
+                # ── Count actual hours worked from attendance ───────────
+                from attendance.models import Attendance as AttModel
+                att_qs = AttModel.objects.filter(
+                    employee=emp,
+                    date__gte=period.start_date,
+                    date__lte=period.end_date,
+                )
+                hours_agg    = att_qs.aggregate(t=Sum('total_hours'))
+                hours_worked = Decimal(str(hours_agg['t'] or 0))
+                late_minutes = att_qs.aggregate(t=Sum('late_minutes'))['t'] or 0
+                days_present = att_qs.filter(status__in=['present', 'late']).count()
+                days_absent  = att_qs.filter(status='absent').count()
+
+                # ── Basic pay = hourly × hours worked ───────────────────
+                basic_pay = (hourly_rate * hours_worked).quantize(
+                    Decimal('0.01'), ROUND_HALF_UP
+                )
+
+                vars_ctx = {
+                    'basic_pay':     float(basic_pay),
+                    'hourly_rate':    float(hourly_rate),
+                    'daily_rate':     float(daily_rate),
+                    'monthly_equiv': float(monthly_equiv),
+                    'hours_worked':   float(hours_worked),
+                    'days_present':   days_present,
+                    'days_absent':    days_absent,
+                    'late_minutes':   late_minutes,
+                    'ot_hours':       0.0,
+                    'ot_rate':        float(ot_rate),
+                    'working_days':   22,
+                    'gross_pay':      float(basic_pay),
+                }
+
+                running      = basic_pay
+                total_earn   = basic_pay
+                total_deduct = Decimal('0')
 
                 payroll, _ = Payroll.objects.update_or_create(
                     employee=emp, payroll_period=period,
                     defaults={
-                        'basic_pay':        result['basic_pay'],
-                        'gross_pay':        result['gross_pay'],
-                        'total_deductions': result['total_deductions'],
-                        'net_pay':          result['net_pay'],
-                        'status':           'finalized',
-                        'is_confirmed':     False,
-                        'processed_by':     request.user,
-                        'processed_at':     timezone.now(),
+                        'basic_pay':     basic_pay,
+                        'status':        'draft',
+                        'is_confirmed':  False,
+                        'processed_by':  request.user,
+                        'processed_at':  timezone.now(),
                     }
                 )
                 PayrollBreakdown.objects.filter(payroll=payroll).delete()
-                for item in result['breakdown']:
+
+                # ── Apply modular components ────────────────────────────
+                for comp in components:
+                    override = EmployeePayrollComponent.objects.filter(
+                        employee=emp, component=comp, is_active=True
+                    ).first()
+                    override_val = Decimal(str(override.value)) if override else None
+
+                    if comp.calculation_type == 'percentage':
+                        pct      = float(override_val if override_val else comp.default_value)
+                        base_key = getattr(comp, 'pct_base', None) or 'monthly_equiv'
+                        base_val = vars_ctx.get(base_key, vars_ctx['monthly_equiv'])
+                        amount   = Decimal(str(base_val * pct / 100))
+                    elif comp.calculation_type == 'formula':
+                        formula = getattr(comp, 'formula', '') or ''
+                        amount  = _eval_formula_with_vars(formula, vars_ctx)
+                    else:
+                        amount = Decimal(str(override_val if override_val else comp.default_value))
+
+                    op = getattr(comp, 'operator', None) or ('+' if comp.type == 'earning' else '-')
+                    prev = running
+                    if   op == '+': running = running + amount
+                    elif op == '-': running = running - amount
+                    elif op == '*': running = running * amount if amount else running
+                    elif op == '/': running = (running / amount).quantize(Decimal('0.01'), ROUND_HALF_UP) if amount else running
+
+                    delta = running - prev
+                    if delta >= 0:
+                        total_earn += delta
+                    else:
+                        total_deduct += abs(delta)
+
+                    vars_ctx['gross_pay'] = float(running)
+
                     PayrollBreakdown.objects.create(
-                        payroll     = payroll,
-                        component_id= item['component_id'],
-                        amount      = Decimal(str(item['amount'])),
-                        description = item['description'],
+                        payroll=payroll, component=comp,
+                        amount=amount,
+                        description=getattr(comp, 'description', None) or comp.name,
                     )
+
+                # ── Apply adjustments (OT and Leave) ────────────────────
+                for adj in Adjustment.objects.filter(employee=emp, payroll_period=period):
+                    adj_amount = Decimal(str(adj.amount))
+
+                    if adj.type == 'overtime':
+                        # Re-compute from hours × ot_rate in case rate changed
+                        computed = (Decimal(str(adj.hours)) * ot_rate).quantize(
+                            Decimal('0.01'), ROUND_HALF_UP
+                        )
+                        adj.rate   = ot_rate
+                        adj.amount = computed
+                        adj.save(update_fields=['rate', 'amount'])
+                        running    += computed
+                        total_earn += computed
+
+                    elif adj.type == 'leave':
+                        # Leave amount is manual — use as-is
+                        if adj_amount >= 0:
+                            running    += adj_amount
+                            total_earn += adj_amount
+                        else:
+                            deduct = abs(adj_amount)
+                            running      -= deduct
+                            total_deduct += deduct
+
+                payroll.basic_pay        = basic_pay
+                payroll.gross_pay        = total_earn.quantize(Decimal('0.01'), ROUND_HALF_UP)
+                payroll.total_deductions = total_deduct.quantize(Decimal('0.01'), ROUND_HALF_UP)
+                payroll.net_pay          = running.quantize(Decimal('0.01'), ROUND_HALF_UP)
+                payroll.status           = 'finalized'
+                payroll.save()
 
         period.status = 'closed'
         period.save()
@@ -393,7 +495,7 @@ def run_payroll(request):
         AuditLog.objects.create(
             user=request.user, action='PAYROLL_RUN',
             table_name='payroll_payrollperiod', record_id=period.id,
-            new_value={'status':'closed','employees':employees.count()},
+            new_value={'status':'closed', 'employees': employees.count()},
             timestamp=timezone.now(),
         )
         messages.success(request, f'Payroll processed for {employees.count()} employees.')
@@ -910,3 +1012,25 @@ def _seed_default_components():
                 'sort_order':       d.get('sort_order', 99),
             }
         )
+        
+        
+def _eval_formula_with_vars(formula, vars_ctx):
+    """
+    Safely evaluates a formula string using the provided variable context.
+    Only allows digits, operators, decimal points, and parentheses after substitution.
+    Returns Decimal result or Decimal('0') on any error.
+    """
+    import re
+    from decimal import Decimal
+    try:
+        expr = str(formula)
+        # Substitute longest variable names first to avoid partial matches
+        for k in sorted(vars_ctx.keys(), key=len, reverse=True):
+            expr = expr.replace(k, str(vars_ctx[k]))
+        if re.fullmatch(r'[\d\.\+\-\*\/\(\)\s]+', expr):
+            result = eval(expr, {'__builtins__': {}}, {})  # noqa: S307
+            if result is not None and str(result) not in ('nan', 'inf', '-inf'):
+                return Decimal(str(result)).quantize(Decimal('0.01'))
+    except Exception:
+        pass
+    return Decimal('0')

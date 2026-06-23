@@ -139,10 +139,8 @@
 
 {% block content %}
 
-<!-- ── Dashboard vs Detail (JS toggles) ── -->
 <div id="dashboard-view">
 
-  <!-- Stats Bar -->
   <div class="att-stats">
     <div class="stat-card">
       <div class="stat-icon green">✅</div>
@@ -166,7 +164,6 @@
     </div>
   </div>
 
-  <!-- Period selector -->
   <div class="period-bar">
     <label>Payroll Period:</label>
     <select class="form-control" style="width:auto;" id="period-select" onchange="changePeriod(this.value)">
@@ -182,7 +179,6 @@
     </div>
   </div>
 
-  <!-- Daily Attendance Table -->
   <div class="card" style="margin-bottom:1.5rem;">
     <div class="card-header">
       <h3>Daily Attendance — <span id="daily-date">{{ today|date:"F d, Y" }}</span></h3>
@@ -241,7 +237,6 @@
     </div>
   </div>
 
-  <!-- Employee grid — click to see individual attendance -->
   <div class="card">
     <div class="card-header">
       <h3>Employee Attendance Summary</h3>
@@ -268,10 +263,7 @@
     </div>
   </div>
 
-</div><!-- /#dashboard-view -->
-
-<!-- ══ EMPLOYEE DETAIL VIEW ══ -->
-<div id="detail-view" style="display:none;">
+</div><div id="detail-view" style="display:none;">
 
   <div class="att-detail-header">
     <button class="back-btn" onclick="backToDashboard()">← Back to Dashboard</button>
@@ -290,7 +282,6 @@
     </div>
   </div>
 
-  <!-- Period Stats -->
   <div class="att-stats" id="detail-stats" style="margin-bottom:1.25rem;">
     <div class="stat-card"><div class="stat-icon green">✅</div><div><div class="stat-num" id="ds-present">—</div><div class="stat-label">Present Days</div></div></div>
     <div class="stat-card"><div class="stat-icon red">🚫</div><div><div class="stat-num" id="ds-absent">—</div><div class="stat-label">Absent Days</div></div></div>
@@ -299,7 +290,6 @@
     <div class="stat-card"><div class="stat-icon" style="background:#F3E8FF;color:#7E22CE;">🕐</div><div><div class="stat-num" id="ds-ot">—</div><div class="stat-label">OT Hours</div></div></div>
   </div>
 
-  <!-- Calendar -->
   <div class="att-calendar">
     <div class="att-cal-header">
       <h3 id="cal-month-label" style="font-size:1rem;font-weight:700;"></h3>
@@ -309,8 +299,7 @@
       </div>
     </div>
     <div class="cal-grid" id="cal-grid">
-      <!-- Populated by JS -->
-    </div>
+      </div>
     <div class="cal-legend">
       <div class="cal-legend-item"><div class="cal-legend-dot" style="background:#DCFCE7;"></div>Present</div>
       <div class="cal-legend-item"><div class="cal-legend-dot" style="background:#FEF3C7;"></div>Late</div>
@@ -320,10 +309,7 @@
     </div>
   </div>
 
-</div><!-- /#detail-view -->
-
-<!-- ══ ATTENDANCE EDIT MODAL ══ -->
-<div class="modal-backdrop" id="att-detail-modal">
+</div><div class="modal-backdrop" id="att-detail-modal">
   <div class="modal">
     <div class="modal-header">
       <h2>Edit Attendance Record</h2>
@@ -339,7 +325,6 @@
           <strong id="att-edit-date"></strong>
         </div>
 
-        <!-- Time inputs -->
         <div class="att-time-grid">
           <div class="att-time-box">
             <label>1st Half Time In</label>
@@ -359,14 +344,12 @@
           </div>
         </div>
 
-        <!-- Action Tabs -->
         <div class="att-action-tabs">
           <button type="button" class="att-action-tab active" onclick="switchAttSection('sec-status', this)">Status</button>
           <button type="button" class="att-action-tab" onclick="switchAttSection('sec-overtime', this)">Overtime</button>
           <button type="button" class="att-action-tab" onclick="switchAttSection('sec-leave', this)">Leave</button>
         </div>
 
-        <!-- Status Section -->
         <div class="att-section active" id="sec-status">
           <div class="form-group">
             <label class="form-label">Attendance Status</label>
@@ -382,7 +365,6 @@
           </div>
         </div>
 
-        <!-- Overtime Section -->
         <div class="att-section" id="sec-overtime">
           <div class="form-group">
             <label class="form-label">Overtime Hours</label>
@@ -402,7 +384,6 @@
           </div>
         </div>
 
-        <!-- Leave Section -->
         <div class="att-section" id="sec-leave">
           <div class="form-group">
             <label class="form-label">Leave Type</label>
@@ -411,8 +392,6 @@
               {% for lt in leave_types %}
               <option value="{{ lt.id }}">{{ lt.name }} ({% if lt.is_paid %}Paid{% else %}Unpaid{% endif %})</option>
               {% endfor %}
-              <!-- NOTE: Leave types are fetched from the LeaveType model.
-                   New leave types added in Settings will automatically appear here. -->
             </select>
           </div>
           <div class="form-group mt-2">
@@ -434,7 +413,6 @@
   </div>
 </div>
 
-<!-- Manual Entry Modal -->
 <div class="modal-backdrop" id="manual-att-modal">
   <div class="modal">
     <div class="modal-header"><h2>Manual Attendance Entry</h2><button class="btn-close" onclick="closeModal('manual-att-modal')">✕</button></div>
@@ -477,6 +455,49 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="quick-ot-modal">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <h2>⚡ Grant Overtime</h2>
+      <button class="btn-close" onclick="closeModal('quick-ot-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="qot-emp-id">
+      <input type="hidden" id="qot-date">
+
+      <div style="background:var(--blue-50);border:1px solid var(--blue-100);
+                  border-radius:var(--radius-sm);padding:.75rem 1rem;
+                  font-size:.84rem;color:var(--blue-800);margin-bottom:1.1rem;">
+        <strong>Date:</strong> <span id="qot-date-label"></span><br>
+        <strong>Auto-detected:</strong> <span id="qot-detected"></span>
+      </div>
+
+      <div class="form-group" style="margin-bottom:.9rem;">
+        <label class="form-label">
+          OT Hours to Grant <span style="color:var(--danger)">*</span>
+        </label>
+        <input type="number" id="qot-hours" class="form-control"
+               step="0.5" min="0.5" placeholder="e.g. 2.5">
+        <div style="font-size:.75rem;color:var(--gray-400);margin-top:.25rem;">
+          Amount will be computed as: OT hours × employee's OT rate (₱/hr)
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Description / Reason</label>
+        <input type="text" id="qot-desc" class="form-control"
+               placeholder="e.g. Overtime on 2026-03-15">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('quick-ot-modal')">Cancel</button>
+      <button class="btn btn-gold" onclick="saveQuickOT()">✅ Grant Overtime</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block script %}
 <script>
   // ── Section toggle (Status / OT / Leave) ──────────────────
   function switchAttSection(id, btn) {
@@ -494,7 +515,7 @@
     });
   }
 
-  // ── Employee detail view ───────────────────────────────────
+  // ── Employee detail view management ────────────────────────
   let currentEmpId = null;
   let calYear, calMonth;
 
@@ -535,11 +556,13 @@
     document.getElementById('cal-month-label').textContent = `${monthNames[month]} ${year}`;
     const grid = document.getElementById('cal-grid');
     grid.innerHTML = '';
+    
     // Headers
     dayNames.forEach(d => {
       const h = document.createElement('div');
       h.className = 'cal-day-header'; h.textContent = d; grid.appendChild(h);
     });
+    
     const firstDay = new Date(year, month, 1).getDay();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const today = new Date();
@@ -549,6 +572,7 @@
       const cell = document.createElement('div');
       cell.className = 'cal-cell other-month'; grid.appendChild(cell);
     }
+    
     // Day cells
     for (let d = 1; d <= daysInMonth; d++) {
       const cell = document.createElement('div');
@@ -559,19 +583,112 @@
       const num = document.createElement('div');
       num.className = 'cal-day-num'; num.textContent = d; cell.appendChild(num);
 
-      // Attach click for editing (Django will provide att_data via JSON script)
       const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
-      cell.onclick = () => openAttDetailByDate(empId, dateStr);
 
-      // Render attendance badge if data available
+      // ── Render attendance badge ──────────────────────────────────────────
       if (window.attData && window.attData[dateStr]) {
         const rec = window.attData[dateStr];
+
+        // Attendance status badge
         const badge = document.createElement('span');
         badge.className = `cal-att-badge ${rec.status}`;
         badge.textContent = rec.status.charAt(0).toUpperCase() + rec.status.slice(1);
         cell.appendChild(badge);
+
+        // Hours worked label
+        if (rec.total_hours > 0) {
+          const hrs = document.createElement('span');
+          hrs.style.cssText = 'font-size:.65rem;color:rgba(107,114,128,1);display:block;margin-top:.1rem;';
+          hrs.textContent = rec.total_hours.toFixed(2) + 'h';
+          cell.appendChild(hrs);
+        }
+
+        // ── OT Flag ────────────────────────────────────────────────────────
+        if (rec.has_overtime) {
+          const otBadge = document.createElement('span');
+          otBadge.style.cssText =
+            'display:block;font-size:.65rem;font-weight:700;padding:.1rem .3rem;' +
+            'border-radius:3px;margin-top:.15rem;cursor:pointer;' +
+            (rec.ot_granted > 0
+              ? 'background:#FEF3C7;color:#B45309;'   // granted OT
+              : 'background:#FEE2E2;color:#B91C1C;');  // detected but not granted
+          otBadge.title = rec.ot_granted > 0
+            ? `OT Granted: ${rec.ot_granted}h — click to edit`
+            : `OT Detected: ~${rec.ot_detected}h extra — click to grant`;
+          otBadge.textContent = rec.ot_granted > 0
+            ? `✓ OT ${rec.ot_granted}h`
+            : `⚡ OT ~${rec.ot_detected}h`;
+
+          // Click OT badge → open quick-grant modal (don't bubble to cell click)
+          otBadge.onclick = (e) => {
+            e.stopPropagation();
+            if (!rec.is_locked) openQuickOT(currentEmpId, dateStr, rec);
+            else showToast('Payroll is confirmed — OT cannot be changed.', 'info');
+          };
+          cell.appendChild(otBadge);
+        }
+
+        // Locked indicator
+        if (rec.is_locked) {
+          cell.style.opacity = '.7';
+          cell.title = 'Payroll confirmed — attendance locked';
+          cell.style.cursor = 'not-allowed';
+        }
       }
+
+      // Cell click → full attendance detail (only if not locked)
+      cell.onclick = () => {
+        const rec = window.attData && window.attData[dateStr];
+        if (rec && rec.is_locked) {
+          showToast('Payroll is confirmed — attendance is locked for this date.', 'info');
+          return;
+        }
+        openAttDetailByDate(currentEmpId, dateStr);
+      };
+
       grid.appendChild(cell);
+    }
+  }
+
+  // ── Quick OT Grant ──────────────────────────────────────────────────────────
+  function openQuickOT(empId, dateStr, rec) {
+    document.getElementById('qot-emp-id').value   = empId;
+    document.getElementById('qot-date').value      = dateStr;
+    document.getElementById('qot-date-label').textContent = dateStr;
+    document.getElementById('qot-detected').textContent =
+      rec.ot_detected > 0 ? rec.ot_detected + 'h detected from time records' : 'None detected';
+    document.getElementById('qot-hours').value    = rec.ot_granted || rec.ot_detected || '';
+    document.getElementById('qot-desc').value     = 'Overtime on ' + dateStr;
+    openModal('quick-ot-modal');
+  }
+
+  async function saveQuickOT() {
+    const empId   = document.getElementById('qot-emp-id').value;
+    const dateStr = document.getElementById('qot-date').value;
+    const hours   = parseFloat(document.getElementById('qot-hours').value || '0');
+    const desc    = document.getElementById('qot-desc').value.trim();
+
+    if (!hours || hours <= 0) {
+      showToast('Enter a valid number of OT hours.', 'error');
+      return;
+    }
+
+    try {
+      const res = await apiPost("{% url 'attendance:grant_overtime' %}", {
+        employee_id: parseInt(empId),
+        date:        dateStr,
+        hours:       hours,
+        description: desc,
+      });
+      if (res.ok) {
+        showToast(`Overtime of ${hours}h granted for ${dateStr}.`, 'success');
+        closeModal('quick-ot-modal');
+        loadDetailStats(empId);
+      } else {
+        showToast(res.error || 'Failed to grant overtime.', 'error');
+      }
+    } catch {
+      showToast('Server error.', 'error');
     }
   }
 
@@ -582,7 +699,6 @@
 
   function openAttDetailByDate(empId, dateStr) {
     document.getElementById('att-edit-date').textContent = dateStr;
-    // In production: fetch record data by empId + dateStr and pre-populate
     openModal('att-detail-modal');
   }
 

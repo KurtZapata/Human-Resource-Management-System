@@ -213,7 +213,6 @@
 {% block content %}
 <div class="salary-page">
 
-  <!-- ── Variable Reference Bar ── -->
   <div class="var-ref">
     <h4>📐 Available Formula Variables — click to copy</h4>
     <div class="var-chips">
@@ -223,10 +222,8 @@
     </div>
   </div>
 
-  <!-- ── Drag & Drop Columns ── -->
   <div class="salary-cols">
 
-    <!-- EARNINGS -->
     <div class="card">
       <div class="col-head">
         <div>
@@ -249,7 +246,6 @@
       </div>
     </div>
 
-    <!-- DEDUCTIONS -->
     <div class="card">
       <div class="col-head">
         <div>
@@ -274,7 +270,6 @@
 
   </div>
 
-  <!-- ── Live Payroll Preview ── -->
   <div class="preview-card">
     <div class="preview-header">
       <h3>📊 Live Payroll Preview</h3>
@@ -282,8 +277,8 @@
         <label style="font-size:.82rem;font-weight:600;color:var(--gray-600);">Grade:</label>
         <select class="form-control preview-grade-sel" id="preview-grade" onchange="runPreview()">
           {% for sg in salary_grades %}
-          <option value="{{ sg.base_salary }}" data-name="{{ sg.name }}">
-            {{ sg.name }} — ₱{{ sg.base_salary|floatformat:"2g" }}
+          <option value="{{ sg.hourly_rate }}" data-name="{{ sg.name }}">
+            {{ sg.name }} — ₱{{ sg.hourly_rate|floatformat:"2g" }}/hr
           </option>
           {% endfor %}
         </select>
@@ -296,11 +291,9 @@
       </div>
     </div>
     <div class="preview-body" id="preview-body">
-      <!-- populated by JS -->
-    </div>
+      </div>
   </div>
 
-  <!-- ── Salary Grades ── -->
   <div class="card">
     <div class="card-header">
       <h3>📊 Salary Grades</h3>
@@ -309,9 +302,9 @@
     <div class="card-body">
       <div class="grades-grid">
         {% for sg in salary_grades %}
-        <div class="grade-card" onclick="editGrade({{ sg.id }}, '{{ sg.name|escapejs }}', '{{ sg.base_salary }}', '{{ sg.overtime_rate }}')">
+        <div class="grade-card" onclick="editGrade({{ sg.id }}, '{{ sg.name|escapejs }}', '{{ sg.hourly_rate }}', '{{ sg.overtime_rate }}')">
           <h4>{{ sg.name }}</h4>
-          <div class="grade-salary">₱{{ sg.base_salary|floatformat:"2g" }}</div>
+          <div class="grade-salary">₱{{ sg.hourly_rate|floatformat:"2g" }}<span style="font-size:.7rem;color:var(--gray-400);font-weight:400;"> /hr</span></div>
           <div class="grade-sub">OT Rate: ₱{{ sg.overtime_rate|floatformat:"2g" }}/hr</div>
           <div style="margin-top:.5rem;">
             <span class="badge badge-blue" style="font-size:.68rem;">{{ sg.employees_count|default:0 }} employees</span>
@@ -324,13 +317,7 @@
     </div>
   </div>
 
-</div><!-- /salary-page -->
-
-
-<!-- ══════════════════════════════════════════════════
-     ADD / EDIT COMPONENT MODAL
-══════════════════════════════════════════════════ -->
-<div class="modal-backdrop" id="add-component-modal">
+</div><div class="modal-backdrop" id="add-component-modal">
   <div class="modal" style="width:min(600px,96vw);">
     <div class="modal-header">
       <h2 id="comp-modal-title">Add Payroll Component</h2>
@@ -342,14 +329,12 @@
         <input type="hidden" id="comp-id" name="component_id">
         <input type="hidden" id="comp-formula-hidden" name="formula">
 
-        <!-- Name -->
         <div class="form-group" style="margin-bottom:1rem;">
           <label class="form-label">Component Name <span style="color:var(--danger)">*</span></label>
           <input type="text" name="name" id="comp-name" class="form-control"
                  placeholder="e.g. Rice Allowance, SSS Contribution" required>
         </div>
 
-        <!-- Type -->
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:.9rem;margin-bottom:1rem;">
           <div class="form-group">
             <label class="form-label">Component Type <span style="color:var(--danger)">*</span></label>
@@ -367,7 +352,6 @@
           </div>
         </div>
 
-        <!-- Operator -->
         <div class="form-group" style="margin-bottom:1rem;">
           <label class="form-label">
             Operator
@@ -385,7 +369,6 @@
           </div>
         </div>
 
-        <!-- Calculation Type -->
         <div class="form-group" style="margin-bottom:.9rem;">
           <label class="form-label">Calculation Method <span style="color:var(--danger)">*</span></label>
           <select name="calculation_type" id="comp-calc" class="form-control" required onchange="updateCalcUI()">
@@ -395,14 +378,12 @@
           </select>
         </div>
 
-        <!-- Fixed amount -->
         <div id="fixed-group" class="form-group" style="margin-bottom:.9rem;">
           <label class="form-label">Fixed Amount (₱)</label>
           <input type="number" name="default_value" id="comp-value" class="form-control"
                  step="0.01" min="0" placeholder="0.00">
         </div>
 
-        <!-- Percentage -->
         <div id="pct-group" style="display:none;margin-bottom:.9rem;">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:.9rem;">
             <div class="form-group">
@@ -423,7 +404,6 @@
           <div style="font-size:.75rem;color:var(--gray-500);margin-top:.35rem;" id="pct-preview">—</div>
         </div>
 
-        <!-- Custom formula -->
         <div id="formula-group" style="display:none;">
           <div class="formula-builder visible">
             <label class="form-label" style="margin-bottom:.5rem;">Formula Expression</label>
@@ -446,7 +426,6 @@
           </div>
         </div>
 
-        <!-- Description -->
         <div class="form-group" style="margin-top:.9rem;">
           <label class="form-label">Description / Notes</label>
           <textarea name="description" id="comp-desc" class="form-control" rows="2"
@@ -463,7 +442,6 @@
   </div>
 </div>
 
-<!-- Salary Grade Modal (reused from salary_grades.html) -->
 <div class="modal-backdrop" id="add-grade-modal">
   <div class="modal" style="max-width:440px;">
     <div class="modal-header">
@@ -474,21 +452,44 @@
       <form id="grade-form" method="post" action="{% url 'employees:create_grade' %}">
         {% csrf_token %}
         <input type="hidden" id="grade-id" name="grade_id">
+        
         <div class="form-group" style="margin-bottom:.9rem;">
           <label class="form-label">Grade Name <span style="color:var(--danger)">*</span></label>
           <input type="text" name="name" id="grade-name" class="form-control"
-                 placeholder="e.g. Grade 1, Junior Staff" required>
+                 placeholder="e.g. Grade 1, Junior Staff, Senior Manager" required>
         </div>
+
         <div class="form-group" style="margin-bottom:.9rem;">
-          <label class="form-label">Base Monthly Salary (₱) <span style="color:var(--danger)">*</span></label>
-          <input type="number" name="base_salary" id="grade-base" class="form-control"
-                 step="0.01" min="0" placeholder="18000.00" required oninput="suggestGradeOT()">
+          <label class="form-label">
+            Hourly Rate (₱/hr) <span style="color:var(--danger)">*</span>
+            <span style="font-size:.72rem;color:var(--gray-400);font-weight:400;margin-left:.35rem;">
+              Primary field — payroll is computed from this
+            </span>
+          </label>
+          <input type="number" name="hourly_rate" id="grade-hourly" class="form-control"
+                 step="0.0001" min="0" placeholder="e.g. 102.27" required
+                 oninput="previewGradeRates()">
         </div>
-        <div class="form-group">
-          <label class="form-label">Overtime Rate (₱/hr) <span style="color:var(--danger)">*</span></label>
+
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">
+            Overtime Rate (₱/hr) <span style="color:var(--danger)">*</span>
+          </label>
           <input type="number" name="overtime_rate" id="grade-ot" class="form-control"
-                 step="0.01" min="0" placeholder="112.50" required>
-          <div style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem;" id="grade-ot-hint"></div>
+                 step="0.0001" min="0" placeholder="Auto-suggested below" required>
+        </div>
+
+        <div id="grade-rate-preview"
+             style="background:var(--blue-50);border:1px solid var(--blue-100);
+                    border-radius:var(--radius-sm);padding:.75rem 1rem;
+                    font-size:.82rem;color:var(--blue-800);display:none;">
+          <strong>Computed values (for reference):</strong>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-top:.4rem;">
+            <div>Daily (×8 hrs): <strong id="preview-daily">—</strong></div>
+            <div>Monthly equiv (×22 days): <strong id="preview-monthly">—</strong></div>
+            <div>Suggested OT (×1.25): <strong id="preview-ot-suggest">—</strong></div>
+            <div>Base salary stored: <strong id="preview-base">—</strong></div>
+          </div>
         </div>
       </form>
     </div>
@@ -499,7 +500,6 @@
   </div>
 </div>
 
-<!-- Delete component confirm -->
 <div class="modal-backdrop" id="del-comp-modal">
   <div class="modal" style="max-width:380px;">
     <div class="modal-header"><h2>Delete Component</h2><button class="btn-close" onclick="closeModal('del-comp-modal')">✕</button></div>
@@ -516,7 +516,6 @@
 </div>
 
 
-<!-- ── Component data from Django ── -->
 <script>
   // Serialised component list for preview calculator
   const COMPONENTS = {{ components_json|safe|default:"[]" }};
@@ -525,8 +524,8 @@
   const VARS = {{ variables_json|safe|default:"{}" }};
 
   /* ═══════════════════════════════════════════════════════════════
-     DRAG & DROP
-  ═══════════════════════════════════════════════════════════════ */
+      DRAG & DROP
+     ═══════════════════════════════════════════════════════════════ */
   let dragging = null;
 
   function onStart(e, el) {
@@ -573,8 +572,8 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════
-     COUNTS
-  ═══════════════════════════════════════════════════════════════ */
+      COUNTS
+     ═══════════════════════════════════════════════════════════════ */
   function updateCounts() {
     document.getElementById('earn-count').textContent =
       document.querySelectorAll('#zone-earning .comp-card:not(.inactive)').length + ' active';
@@ -584,8 +583,8 @@
   document.addEventListener('DOMContentLoaded', updateCounts);
 
   /* ═══════════════════════════════════════════════════════════════
-     TOGGLE ACTIVE
-  ═══════════════════════════════════════════════════════════════ */
+      TOGGLE ACTIVE
+     ═══════════════════════════════════════════════════════════════ */
   async function toggleComp(id, btn) {
     const res = await apiPost("{% url 'payroll:toggle_component' %}", { id });
     if (res.is_active) {
@@ -599,8 +598,8 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════
-     SAVE ORDER
-  ═══════════════════════════════════════════════════════════════ */
+      SAVE ORDER
+     ═══════════════════════════════════════════════════════════════ */
   async function saveOrder() {
     const order = [...document.querySelectorAll('.comp-card[data-id]')].map((el, i) => ({
       id:   parseInt(el.dataset.id),
@@ -613,8 +612,8 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════
-     ADD / EDIT MODAL
-  ═══════════════════════════════════════════════════════════════ */
+      ADD / EDIT MODAL
+     ═══════════════════════════════════════════════════════════════ */
   function openAddModal(type = 'earning') {
     document.getElementById('comp-modal-title').textContent = 'Add Payroll Component';
     document.getElementById('comp-id').value       = '';
@@ -673,8 +672,8 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════
-     OPERATOR SELECTOR
-  ═══════════════════════════════════════════════════════════════ */
+      OPERATOR SELECTOR
+     ═══════════════════════════════════════════════════════════════ */
   const OP_HINTS = {
     '+': '+ adds this amount to the running total',
     '-': '− subtracts this amount from the running total',
@@ -689,8 +688,8 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════
-     CALCULATION TYPE UI
-  ═══════════════════════════════════════════════════════════════ */
+      CALCULATION TYPE UI
+     ═══════════════════════════════════════════════════════════════ */
   function updateCalcUI() {
     const t = document.getElementById('comp-calc').value;
     document.getElementById('fixed-group').style.display   = t === 'fixed'      ? '' : 'none';
@@ -711,8 +710,11 @@
     const base = document.getElementById('comp-pct-base').value;
     document.getElementById('comp-value').value = pct;
     document.getElementById('comp-modal-hint').textContent = '';
-    const previewBase = parseFloat(document.getElementById('preview-grade').value) || 18000;
-    const baseVal     = getSampleVar(base, previewBase);
+    
+    const sampleHourly = parseFloat(document.getElementById('preview-grade').value) || 100;
+    const computedVars = buildSampleVars(sampleHourly);
+    const baseVal = computedVars[base] || computedVars['monthly_equiv'];
+    
     if (baseVal) {
       const amount = baseVal * (pct / 100);
       document.getElementById('pct-preview').textContent =
@@ -721,8 +723,8 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════
-     FORMULA BUILDER
-  ═══════════════════════════════════════════════════════════════ */
+      FORMULA BUILDER
+     ═══════════════════════════════════════════════════════════════ */
   function insertVar(v) {
     const inp = document.getElementById('formula-input');
     const s   = inp.selectionStart, e = inp.selectionEnd;
@@ -737,8 +739,9 @@
     const resEl  = document.getElementById('formula-result');
     document.getElementById('comp-formula-hidden').value = raw;
     if (!raw) { resEl.style.display = 'none'; return; }
-    const previewBase = parseFloat(document.getElementById('preview-grade').value) || 18000;
-    const result = evalFormulaSafe(raw, buildSampleVars(previewBase));
+    
+    const sampleHourly = parseFloat(document.getElementById('preview-grade').value) || 100;
+    const result = evalFormulaSafe(raw, buildSampleVars(sampleHourly));
     resEl.style.display = '';
     if (result !== null) {
       resEl.className = 'formula-result ok';
@@ -761,37 +764,37 @@
     } catch { return null; }
   }
 
-  function buildSampleVars(basicPay) {
+  function buildSampleVars(hourlyRate) {
     const days = parseFloat(document.getElementById('preview-days')?.value) || 22;
     const ot   = parseFloat(document.getElementById('preview-ot')?.value)   || 0;
-    const daily = basicPay / 22;
-    const hourly = daily / 8;
+    const daily = hourlyRate * 8;
+    const monthlyEquiv = daily * 22;
+    const actualBasic = hourlyRate * 8 * days; 
+    
     return {
-      basic_pay:      basicPay,
+      basic_pay:      actualBasic,
+      hourly_rate:    hourlyRate,
       daily_rate:     daily,
-      hourly_rate:    hourly,
+      monthly_equiv:  monthlyEquiv,
+      hours_worked:   days * 8,
       days_present:   days,
       days_absent:    22 - days,
       ot_hours:       ot,
-      gross_pay:      basicPay,   // approximation at build time
+      ot_rate:        hourlyRate * 1.25,
+      gross_pay:      actualBasic, // running base approximation
       working_days:   22,
     };
   }
 
-  function getSampleVar(name, basicPay) {
-    return buildSampleVars(basicPay)[name] || basicPay;
-  }
-
   /* ═══════════════════════════════════════════════════════════════
-     SUBMIT COMPONENT FORM
-  ═══════════════════════════════════════════════════════════════ */
+      SUBMIT COMPONENT FORM
+     ═══════════════════════════════════════════════════════════════ */
   function submitCompForm() {
     const calc = document.getElementById('comp-calc').value;
     if (calc === 'formula') {
       const raw = document.getElementById('formula-input').value.trim();
       document.getElementById('comp-formula-hidden').value = raw;
-      const result = evalFormulaSafe(raw, buildSampleVars(18000));
-      if (result === null) {
+      if (evalFormulaSafe(raw, buildSampleVars(100)) === null) {
         showToast('Formula is invalid. Please check and try again.', 'error');
         return;
       }
@@ -800,29 +803,31 @@
   }
 
   /* ═══════════════════════════════════════════════════════════════
-     LIVE PAYROLL PREVIEW
-  ═══════════════════════════════════════════════════════════════ */
+      LIVE PAYROLL PREVIEW
+     ═══════════════════════════════════════════════════════════════ */
   function fmt(n) {
     return (parseFloat(n)||0).toLocaleString('en-PH',{minimumFractionDigits:2,maximumFractionDigits:2});
   }
 
   function runPreview() {
-    const basicPay  = parseFloat(document.getElementById('preview-grade').value) || 0;
-    const days      = parseFloat(document.getElementById('preview-days').value)  || 22;
-    const otHours   = parseFloat(document.getElementById('preview-ot').value)    || 0;
-    const gradeName = document.getElementById('preview-grade').selectedOptions[0]?.dataset.name || '';
+    const hourlyRate = parseFloat(document.getElementById('preview-grade').value) || 0;
+    const days       = parseFloat(document.getElementById('preview-days').value)  || 22;
+    const otHours    = parseFloat(document.getElementById('preview-ot').value)    || 0;
+    const gradeName  = document.getElementById('preview-grade').selectedOptions[0]?.dataset.name || '';
 
-    const vars = buildSampleVars(basicPay);
-    vars.ot_hours    = otHours;
-    vars.days_present= days;
-    vars.days_absent = 22 - days;
+    const vars = buildSampleVars(hourlyRate);
+    vars.ot_hours     = otHours;
+    vars.days_present = days;
+    vars.days_absent  = 22 - days;
 
-    let running  = basicPay;
-    let rows     = `<div class="calc-row">
-                      <span class="op">₱</span>
-                      <span class="name"><strong>Basic Pay</strong> — ${gradeName}</span>
-                      <span class="amount positive">₱${fmt(basicPay)}</span>
-                    </div>`;
+    const basePayVal = vars.basic_pay;
+    let running = basePayVal;
+    
+    let rows = `<div class="calc-row">
+                  <span class="op">₱</span>
+                  <span class="name"><strong>Basic Pay</strong> — ${gradeName} (${days} days × 8 hrs)</span>
+                  <span class="amount positive">₱${fmt(basePayVal)}</span>
+                </div>`;
 
     // Walk all active components in DOM order
     const cards = [...document.querySelectorAll('.comp-card[data-id]:not(.inactive)')];
@@ -833,7 +838,7 @@
 
       const amount = computeComp(comp, vars, running);
       const op     = comp.operator || (comp.type === 'earning' ? '+' : '-');
-      vars.gross_pay = running; // update for next formula
+      vars.gross_pay = running; // update variables context dynamically
 
       const opLabel = { '+':'plus', '-':'minus', '*':'times', '/':'divide' }[op] || 'plus';
       const opChar  = { '+':'+', '-':'−', '*':'×', '/':'÷' }[op] || op;
@@ -864,7 +869,7 @@
     const val = parseFloat(comp.default_value) || 0;
     if (comp.calculation_type === 'fixed') return val;
     if (comp.calculation_type === 'percentage') {
-      const base = vars[comp.pct_base || 'basic_pay'] || vars.basic_pay;
+      const base = vars[comp.pct_base || 'monthly_equiv'] || vars.monthly_equiv;
       return base * (val / 100);
     }
     if (comp.calculation_type === 'formula' && comp.formula) {
@@ -877,30 +882,40 @@
   document.addEventListener('DOMContentLoaded', runPreview);
 
   /* ═══════════════════════════════════════════════════════════════
-     MISC
-  ═══════════════════════════════════════════════════════════════ */
+      MISC & MODAL ROUTINES
+     ═══════════════════════════════════════════════════════════════ */
   function copyVar(name) {
     navigator.clipboard.writeText(name).then(() => showToast(`Copied: ${name}`, 'info'));
   }
 
-  function editGrade(id, name, base, ot) {
+  function editGrade(id, name, hourly, ot) {
     document.getElementById('grade-modal-title').textContent = 'Edit Salary Grade';
-    document.getElementById('grade-id').value   = id;
-    document.getElementById('grade-name').value = name;
-    document.getElementById('grade-base').value = base;
-    document.getElementById('grade-ot').value   = ot;
-    document.getElementById('grade-form').action = `/employees/salary-grades/${id}/update/`;
+    document.getElementById('grade-id').value     = id;
+    document.getElementById('grade-name').value   = name;
+    document.getElementById('grade-hourly').value = hourly;
+    document.getElementById('grade-ot').value     = ot;
+    document.getElementById('grade-form').action  = `/employees/salary-grades/${id}/update/`;
+    previewGradeRates();
     openModal('add-grade-modal');
   }
 
-  function suggestGradeOT() {
-    const base = parseFloat(document.getElementById('grade-base').value) || 0;
-    if (base > 0) {
-      const suggested = (base / 22 / 8 * 1.25).toFixed(2);
-      document.getElementById('grade-ot').placeholder = suggested;
-      document.getElementById('grade-ot-hint').textContent =
-        `Suggested: ₱${suggested}/hr (hourly rate × 1.25 OT multiplier)`;
-    }
+  function previewGradeRates() {
+    const hr = parseFloat(document.getElementById('grade-hourly').value) || 0;
+    if (hr <= 0) { document.getElementById('grade-rate-preview').style.display='none'; return; }
+
+    const daily    = hr * 8;
+    const monthly  = daily * 22;
+    const otSuggest= hr * 1.25;
+
+    document.getElementById('preview-daily').textContent    = '₱' + daily.toFixed(2);
+    document.getElementById('preview-monthly').textContent  = '₱' + monthly.toFixed(2);
+    document.getElementById('preview-ot-suggest').textContent = '₱' + otSuggest.toFixed(4) + '/hr';
+    document.getElementById('preview-base').textContent    = '₱' + monthly.toFixed(2);
+    document.getElementById('grade-rate-preview').style.display = '';
+
+    // Auto-suggest OT rate if empty
+    const otField = document.getElementById('grade-ot');
+    if (!otField.value) otField.value = otSuggest.toFixed(4);
   }
 </script>
 {% endblock %}

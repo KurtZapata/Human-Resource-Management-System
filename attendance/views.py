@@ -9,7 +9,7 @@ NOTE: Every mutating view writes to AuditLog and AttendanceLog.
 import json
 import csv
 from datetime import date, datetime, timedelta
-
+from decimal import Decimal
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST, require_GET
@@ -65,13 +65,13 @@ def timein_page(request):
 def log_attendance(request):
     """
     AJAX POST endpoint called by timein.html.
-    Validates OTP, then records time_in or time_out.
+    Validates OTP, then records attendance by filling the next available sequential slot.
 
     Expected JSON body:
-        { "otp": "123456", "action": "time_in" | "time_out" }
+        { "otp": "123456", "expected_action": "time_in" | "time_out" }
 
     Returns JSON:
-        Success: { "success": true, "employee_name": "...", "half": "am"|"pm" }
+        Success: { "success": true, "employee_name": "...", "action": "...", "half": "first"|"second", "logged_time": "HH:MM", "today": {...} }
         Failure: { "success": false, "message": "..." }
     """
     if request.method != 'POST':
@@ -83,7 +83,6 @@ def log_attendance(request):
         return JsonResponse({'success': False, 'message': 'Invalid JSON.'}, status=400)
 
     otp_code = body.get('otp', '').strip()
-    action   = body.get('action', 'time_in')   # 'time_in' or 'time_out'
 
     # ── Step 1: Resolve employee from session ──────────────────────────────
     emp_session = request.session.get('timein_employee')
@@ -96,7 +95,7 @@ def log_attendance(request):
         return JsonResponse({'success': False, 'message': 'Employee account not found.'})
 
     # ── Step 2: Validate OTP ────────────────────────────────────────────────
-    now    = timezone.now()
+    now = timezone.now()
     otp_qs = OTP.objects.filter(
         code=otp_code,
         is_used=False,
@@ -108,7 +107,10 @@ def log_attendance(request):
     ).first()
 
     if not otp_obj:
-        _log_attendance_attempt(employee.id, action, success=False, request=request)
+        # Note: If _log_attendance_attempt expects the explicit 'action' from the body, 
+        # fallback to expected_action or 'time_in'
+        fallback_action = body.get('expected_action', 'time_in')
+        _log_attendance_attempt(employee.id, fallback_action, success=False, request=request)
         return JsonResponse({'success': False, 'message': 'Invalid or expired OTP. Please request a new one.'})
 
     # ── Step 3: Mark OTP as used ────────────────────────────────────────────
@@ -116,64 +118,81 @@ def log_attendance(request):
     otp_obj.used_by_employee_id = employee.id
     otp_obj.save(update_fields=['is_used', 'used_by_employee_id'])
 
-    # ── Step 4: Determine AM/PM half ───────────────────────────────────────
-    current_hour = now.hour
-    half = 'am' if current_hour < 13 else 'pm'
-
-    # ── Step 5: Get or create today's attendance record ────────────────────
+    # ── Step 4: Determine next available slot (sequential, not clock-based) ─
     att, created = Attendance.objects.get_or_create(
         employee=employee,
         date=date.today(),
         defaults={'status': 'present'}
     )
 
-    time_str = now.time().replace(microsecond=0)
+    time_now = now.time().replace(microsecond=0)
 
-    if action == 'time_in':
-        if half == 'am' and not att.time_in_am:
-            att.time_in_am = time_str
-        elif half == 'pm' and not att.time_in_pm:
-            att.time_in_pm = time_str
-        else:
-            return JsonResponse({
-                'success': False,
-                'message': f'Time-in for {"morning" if half == "am" else "afternoon"} already recorded.'
-            })
-    else:  # time_out
-        if half == 'am' and not att.time_out_am:
-            att.time_out_am = time_str
-        elif half == 'pm' and not att.time_out_pm:
-            att.time_out_pm = time_str
-        else:
-            return JsonResponse({
-                'success': False,
-                'message': f'Time-out for {"morning" if half == "am" else "afternoon"} already recorded.'
-            })
+    # Resolve which slot to fill next:
+    #   Slot 1: time_in_am  → first thing in the day
+    #   Slot 2: time_out_am → after time_in_am is set
+    #   Slot 3: time_in_pm  → after time_out_am is set
+    #   Slot 4: time_out_pm → after time_in_pm is set
+    if not att.time_in_am:
+        resolved_action = 'time_in'
+        resolved_half   = 'first'
+        att.time_in_am  = time_now
+    elif not att.time_out_am:
+        resolved_action = 'time_out'
+        resolved_half   = 'first'
+        att.time_out_am = time_now
+    elif not att.time_in_pm:
+        resolved_action = 'time_in'
+        resolved_half   = 'second'
+        att.time_in_pm  = time_now
+    elif not att.time_out_pm:
+        resolved_action = 'time_out'
+        resolved_half   = 'second'
+        att.time_out_pm = time_now
+    else:
+        return JsonResponse({
+            'success': False,
+            'message': 'All attendance slots for today are already filled.'
+        })
 
-    # ── Step 6: Recalculate totals ─────────────────────────────────────────
-    att.total_hours = _calculate_total_hours(att)
-    att.late_minutes = _calculate_late_minutes(att)
+    # Validate that employee sent the expected action (optional UX check)
+    expected_action = body.get('expected_action')
+    if expected_action and expected_action != resolved_action:
+        # Mismatch — still proceed but note it in the log if desired
+        pass
+
+    # ── Step 5: Recalculate totals ─────────────────────────────────────────
+    att.total_hours       = _calculate_total_hours(att)
+    att.late_minutes      = _calculate_late_minutes(att)
     att.undertime_minutes = _calculate_undertime(att)
 
-    if att.late_minutes and att.late_minutes > 0:
+    if att.late_minutes and att.late_minutes > 0 and att.status == 'present':
         att.status = 'late'
-
     att.save()
 
-    # ── Step 7: Write AttendanceLog (audit trail) ──────────────────────────
+    # ── Step 6: Write AttendanceLog (audit trail) ──────────────────────────
     AttendanceLog.objects.create(
-        employee=employee,
-        action=action,
-        timestamp=now,
-        ip_address=_get_ip(request),
-        device_info=request.META.get('HTTP_USER_AGENT', '')[:255],
+        employee    = employee,
+        action      = resolved_action,
+        timestamp   = now,
+        ip_address  = _get_ip(request),
+        device_info = request.META.get('HTTP_USER_AGENT', '')[:255],
     )
 
+    # Build today's state for the frontend to update shift display
+    today_state = {
+        'time_in_am':  str(att.time_in_am)[:5]  if att.time_in_am  else None,
+        'time_out_am': str(att.time_out_am)[:5] if att.time_out_am else None,
+        'time_in_pm':  str(att.time_in_pm)[:5]  if att.time_in_pm  else None,
+        'time_out_pm': str(att.time_out_pm)[:5] if att.time_out_pm else None,
+    }
+
     return JsonResponse({
-        'success': True,
+        'success':       True,
         'employee_name': f'{employee.first_name} {employee.last_name}',
-        'half': half,
-        'time': str(time_str),
+        'action':        resolved_action,
+        'half':          resolved_half,
+        'logged_time':   str(time_now)[:5],
+        'today':         today_state,
     })
 
 
@@ -309,65 +328,110 @@ def attendance_records(request):
 def update_attendance(request, pk):
     """
     POST: Admin edits an attendance record.
-    Supports updating times, status, overtime, and leave.
+    - Only updates time fields that were explicitly submitted with a value
+    - Recalculates total_hours, late_minutes, undertime
+    - Triggers payroll recompute if the record falls in a closed/finalized period
+    - Blocks edits if the payroll period is locked (closed + confirmed)
     """
     if request.method != 'POST':
         return redirect('attendance:dashboard')
 
     att = get_object_or_404(Attendance, pk=pk)
+
+    # ── Lock check: block edits if payroll already confirmed ──────────────
+    locked_period = PayrollPeriod.objects.filter(
+        status='closed',
+        start_date__lte=att.date,
+        end_date__gte=att.date,
+    ).first()
+    if locked_period:
+        # Check if any payroll for this employee in this period is confirmed
+        from payroll.models import Payroll as PayrollModel
+        confirmed = PayrollModel.objects.filter(
+            employee=att.employee,
+            payroll_period=locked_period,
+            is_confirmed=True,
+        ).exists()
+        if confirmed:
+            messages.error(
+                request,
+                f'Cannot edit attendance for {att.date}: '
+                f'payroll for this period has already been confirmed.'
+            )
+            return redirect('attendance:dashboard')
+
     old = _att_to_dict(att)
     d   = request.POST
 
-    # Time fields — only update if value provided
+    # ── Only update time fields that were explicitly submitted ────────────
+    # Empty string = not submitted / unchanged. None = explicitly cleared.
+    # We use a special sentinel: the form sends "CLEAR" to explicitly clear a field.
     for field in ('time_in_am', 'time_out_am', 'time_in_pm', 'time_out_pm'):
-        val = d.get(field, '').strip()
-        if val:
-            setattr(att, field, val)
-        elif val == '':
-            # Explicitly cleared
+        raw = d.get(field, None)
+        if raw is None:
+            pass  # field not in POST at all — leave unchanged
+        elif raw.strip() == 'CLEAR':
             setattr(att, field, None)
+        elif raw.strip() != '':
+            setattr(att, field, raw.strip())
+        # empty string '' = unchanged, do nothing
 
-    att.status = d.get('status', att.status)
+    status_val = d.get('status', '').strip()
+    if status_val:
+        att.status = status_val
+
+    # ── Recalculate derived fields ─────────────────────────────────────────
     att.total_hours       = _calculate_total_hours(att)
     att.late_minutes      = _calculate_late_minutes(att)
     att.undertime_minutes = _calculate_undertime(att)
+
+    # Auto-update status based on late minutes
+    if att.time_in_am and att.late_minutes and att.late_minutes > 0:
+        if att.status == 'present':
+            att.status = 'late'
+    elif att.status == 'late' and (not att.late_minutes or att.late_minutes == 0):
+        att.status = 'present'
+
     att.save()
 
-    # Handle overtime approval
-    ot_hours   = d.get('overtime_hours', '').strip()
-    ot_approved = d.get('ot_approved', '').strip()
-    if ot_hours:
-        _upsert_adjustment(
-            employee=att.employee,
-            date=att.date,
-            adj_type='overtime',
-            hours=float(ot_hours),
-            approved=ot_approved,
-            description=d.get('ot_description', ''),
-            created_by=request.user,
+    # ── Handle OT adjustment from attendance edit ─────────────────────────
+    ot_hours_str = d.get('overtime_hours', '').strip()
+    if ot_hours_str:
+        ot_hours = float(ot_hours_str)
+        _upsert_adjustment_for_date(
+            employee    = att.employee,
+            att_date    = att.date,
+            adj_type    = 'overtime',
+            hours       = ot_hours,
+            description = d.get('ot_description', f'Overtime on {att.date}'),
+            created_by  = request.user,
         )
 
-    # Handle leave
+    # ── Handle Leave from attendance edit ─────────────────────────────────
     leave_type_id = d.get('leave_type_id', '').strip()
-    leave_status  = d.get('leave_status', 'pending')
-    if leave_type_id:
-        _upsert_adjustment(
-            employee=att.employee,
-            date=att.date,
-            adj_type='leave',
-            leave_type_id=int(leave_type_id),
-            hours=8,
-            approved=leave_status,
-            description='Leave',
-            created_by=request.user,
+    leave_amount  = d.get('leave_amount', '').strip()
+    if leave_type_id and leave_amount:
+        _upsert_adjustment_for_date(
+            employee      = att.employee,
+            att_date      = att.date,
+            adj_type      = 'leave',
+            hours         = 0,
+            description   = d.get('leave_description', f'Leave on {att.date}'),
+            created_by    = request.user,
+            leave_type_id = int(leave_type_id),
+            leave_amount  = float(leave_amount),
         )
+
+    # ── Recompute payroll if this date falls in any period ────────────────
+    _recompute_payroll_for_attendance(att)
 
     AuditLog.objects.create(
         user=request.user, action='UPDATE',
         table_name='attendance_attendance', record_id=att.id,
-        old_value=old, new_value=_att_to_dict(att), timestamp=timezone.now(),
+        old_value=old, new_value=_att_to_dict(att),
+        timestamp=timezone.now(),
     )
-    messages.success(request, 'Attendance record updated.')
+    messages.success(request, f'Attendance for {att.date} updated.')
     return redirect('attendance:dashboard')
 
 
@@ -405,7 +469,11 @@ def manual_entry(request):
 def employee_stats(request):
     """
     AJAX: Returns attendance stats + per-date records for one employee + period.
-    Used by the attendance calendar in the detail view.
+    Each date record now includes:
+      - status, total_hours, late_minutes
+      - has_overtime: bool — true if any OT adjustment exists for that date
+      - ot_hours: float — total OT hours granted for that date
+      - is_locked: bool — true if payroll for this period is confirmed
     """
     emp_id    = request.GET.get('emp_id')
     period_id = request.GET.get('period_id')
@@ -419,32 +487,80 @@ def employee_stats(request):
             period = PayrollPeriod.objects.get(pk=period_id)
             qs = qs.filter(date__gte=period.start_date, date__lte=period.end_date)
         except PayrollPeriod.DoesNotExist:
-            pass
+            period = None
+    else:
+        period = None
 
-    # Build per-date record map for calendar rendering
+    # Check if this period's payroll is confirmed (locked)
+    is_locked = False
+    if period:
+        from payroll.models import Payroll as PayrollModel
+        is_locked = PayrollModel.objects.filter(
+            employee_id=emp_id,
+            payroll_period=period,
+            is_confirmed=True,
+        ).exists()
+
+    # Build OT adjustment map keyed by date string
+    adj_qs = Adjustment.objects.filter(employee_id=emp_id, type='overtime')
+    if period:
+        adj_qs = adj_qs.filter(payroll_period=period)
+
+    ot_by_date = {}
+    for adj in adj_qs:
+        # Use description to extract date (set by _upsert_adjustment_for_date)
+        # Also try to match by period dates
+        key = adj.description  # e.g. "Overtime on 2026-03-15"
+        import re
+        date_match = re.search(r'(\d{4}-\d{2}-\d{2})', adj.description or '')
+        if date_match:
+            d_str = date_match.group(1)
+            ot_by_date.setdefault(d_str, 0)
+            ot_by_date[d_str] += float(adj.hours or 0)
+
+    # Build per-date record map
     records = {}
     for a in qs:
-        records[str(a.date)] = {
-            'status':      a.status,
-            'total_hours': float(a.total_hours) if a.total_hours else 0,
+        d_str = str(a.date)
+        ot_h  = ot_by_date.get(d_str, 0)
+
+        # Flag overtime: worked more than standard day OR has an OT adjustment
+        standard_day_hours = 8.0
+        worked = float(a.total_hours or 0)
+        auto_ot = max(0, worked - standard_day_hours)
+
+        records[d_str] = {
+            'status':       a.status,
+            'total_hours':  float(a.total_hours or 0),
             'late_minutes': a.late_minutes or 0,
+            'has_overtime': ot_h > 0 or auto_ot > 0,
+            'ot_hours':     ot_h if ot_h > 0 else round(auto_ot, 2),
+            'ot_granted':   ot_h,           # officially granted OT from adjustments
+            'ot_detected':  round(auto_ot, 2),  # auto-detected from extra hours
+            'is_locked':    is_locked,
+            'att_id':       a.id,
         }
 
-    # Count adjustments (leave & OT)
-    adj_qs = Adjustment.objects.filter(employee_id=emp_id)
-    if period_id:
-        adj_qs = adj_qs.filter(payroll_period_id=period_id)
+    # Aggregates
+    adj_all   = Adjustment.objects.filter(employee_id=emp_id)
+    if period:
+        adj_all = adj_all.filter(payroll_period=period)
 
-    ot_hours  = adj_qs.filter(type='overtime').aggregate(total=Sum('hours'))['total'] or 0
-    leave_days = adj_qs.filter(type='leave').count()
+    ot_total    = adj_all.filter(type='overtime').aggregate(h=Sum('hours'))['h'] or 0
+    leave_count = adj_all.filter(type='leave').count()
+
+    # Period-level totals
+    hours_sum = qs.aggregate(t=Sum('total_hours'))['t'] or 0
 
     return JsonResponse({
-        'present':  qs.filter(status='present').count(),
-        'absent':   qs.filter(status='absent').count(),
-        'late':     qs.filter(status='late').count(),
-        'leave':    leave_days,
-        'ot_hours': float(ot_hours),
-        'records':  records,
+        'present':     qs.filter(status__in=['present','late']).count(),
+        'absent':      qs.filter(status='absent').count(),
+        'late':        qs.filter(status='late').count(),
+        'leave':       leave_count,
+        'ot_hours':    float(ot_total),
+        'total_hours': float(hours_sum),
+        'is_locked':   is_locked,
+        'records':     records,
     })
 
 
@@ -545,29 +661,48 @@ def generate_otp(request):
 
 def _calculate_total_hours(att):
     """
-    Calculates total work hours from the four time fields.
-    AM half:  time_in_am  → time_out_am
-    PM half:  time_in_pm  → time_out_pm
+    Total hours worked for one Attendance record.
+    - Handles overnight (time_out < time_in).
+    - Returns Decimal rounded to 4 places (matches DecimalField precision).
+    - Each half (AM / PM) is calculated independently.
     """
+    from decimal import Decimal
+
     total = timedelta()
     if att.time_in_am and att.time_out_am:
-        total += _time_diff(att.time_in_am, att.time_out_am)
+        total += _time_diff(att.time_in_am, att.time_out_am, allow_overnight=True)
     if att.time_in_pm and att.time_out_pm:
-        total += _time_diff(att.time_in_pm, att.time_out_pm)
-    return round(total.total_seconds() / 3600, 2)
+        total += _time_diff(att.time_in_pm, att.time_out_pm, allow_overnight=True)
+
+    hours = Decimal(str(round(total.total_seconds() / 3600, 4)))
+    return hours.quantize(Decimal('0.0001'))
 
 
-def _time_diff(t1, t2):
-    """Returns timedelta between two time objects (or strings HH:MM:SS)."""
-    from datetime import time as time_type
+def _time_diff(t1, t2, allow_overnight=False):
+    """
+    Returns timedelta between two time objects or HH:MM:SS strings.
+    If t2 < t1 and allow_overnight=True, treats as crossing midnight.
+    Example: 23:00 → 01:30 = 2.5 hours (not -21.5).
+    """
     if isinstance(t1, str):
-        t1 = datetime.strptime(t1, '%H:%M:%S').time()
+        t1 = datetime.strptime(t1[:8].ljust(8,'0'), '%H:%M:%S').time()
     if isinstance(t2, str):
-        t2 = datetime.strptime(t2, '%H:%M:%S').time()
-    d1 = datetime.combine(date.today(), t1)
-    d2 = datetime.combine(date.today(), t2)
+        t2 = datetime.strptime(t2[:8].ljust(8,'0'), '%H:%M:%S').time()
+
+    base = date.today()
+    d1   = datetime.combine(base, t1)
+    d2   = datetime.combine(base, t2)
     diff = d2 - d1
-    return diff if diff.total_seconds() > 0 else timedelta()
+
+    if diff.total_seconds() < 0:
+        if allow_overnight:
+            # Shift went past midnight — add one day to end time
+            d2   = datetime.combine(base + timedelta(days=1), t2)
+            diff = d2 - d1
+        else:
+            return timedelta(0)
+
+    return diff
 
 
 def _calculate_late_minutes(att):
@@ -599,30 +734,52 @@ def _calculate_undertime(att):
     return 0
 
 
-def _upsert_adjustment(employee, date, adj_type, hours, approved, description, created_by,
-                        leave_type_id=None):
+def _upsert_adjustment_for_date(employee, att_date, adj_type, hours,
+                                  description, created_by,
+                                  leave_type_id=None, leave_amount=None):
     """
-    Creates or updates an Adjustment record for overtime or leave.
-    Tied to the open payroll period.
+    Creates or updates one Adjustment record per employee+date+type.
+    OT amount = hours × employee's ot_rate (auto-computed).
+    Leave amount = leave_amount param (manual input by admin).
     """
-    period = PayrollPeriod.objects.filter(
-        status='open', start_date__lte=date, end_date__gte=date
-    ).first()
-    if not period:
-        return  # No open period for this date; skip
+    from decimal import Decimal, ROUND_HALF_UP
+    from payroll.models import PayrollPeriod, Adjustment
 
-    adj, _ = Adjustment.objects.get_or_create(
-        employee=employee,
-        payroll_period=period,
-        type=adj_type,
-        defaults={'hours': 0, 'rate': 0, 'amount': 0, 'description': description, 'created_by': created_by},
+    # Find the open or most-recent payroll period that contains this date
+    period = PayrollPeriod.objects.filter(
+        start_date__lte=att_date,
+        end_date__gte=att_date,
+    ).order_by('-start_date').first()
+
+    if not period:
+        return  # No period covers this date — skip silently
+
+    if adj_type == 'overtime':
+        sg      = employee.salary_grade if employee.salary_grade else None
+        ot_rate = Decimal(str(sg.overtime_rate)) if sg else Decimal('0')
+        amount  = (Decimal(str(hours)) * ot_rate).quantize(Decimal('0.01'), ROUND_HALF_UP)
+        rate    = ot_rate
+    else:
+        # Leave: use manually-supplied amount
+        amount = Decimal(str(leave_amount or 0))
+        rate   = Decimal('0')
+
+    # One record per employee + date + type
+    adj, created = Adjustment.objects.update_or_create(
+        employee       = employee,
+        payroll_period = period,
+        type           = adj_type,
+        # Use description to distinguish multiple OT entries on different dates
+        description    = description,
+        defaults={
+            'hours':         hours,
+            'rate':          rate,
+            'amount':        amount,
+            'leave_type_id': leave_type_id,
+            'created_by':    created_by,
+        }
     )
-    adj.hours       = hours
-    adj.description = description
-    adj.created_by  = created_by
-    if leave_type_id:
-        adj.leave_type_id = leave_type_id
-    adj.save()
+    return adj
 
 
 def _att_to_dict(att):
@@ -830,3 +987,216 @@ def otp_stats_json(request):
         'active_now':    qs.filter(is_used=False, expires_at__gt=now).count(),
         'expired_today': qs.filter(is_used=False, expires_at__lte=now).count(),
     })
+
+
+def _recompute_payroll_for_attendance(att):
+    """
+    After an attendance record is edited, recalculate payroll for the
+    affected employee if their payroll for this period is still in draft.
+    Does nothing if payroll is confirmed (locked).
+    """
+    try:
+        from payroll.models import PayrollPeriod, Payroll, PayrollBreakdown, PayrollComponent, EmployeePayrollComponent, Adjustment
+        from decimal import Decimal, ROUND_HALF_UP
+        from django.db.models import Sum
+
+        period = PayrollPeriod.objects.filter(
+            start_date__lte=att.date,
+            end_date__gte=att.date,
+        ).first()
+        if not period:
+            return
+
+        payroll = Payroll.objects.filter(
+            employee=att.employee,
+            payroll_period=period,
+        ).first()
+        if not payroll or payroll.is_confirmed:
+            return  # Locked — do not recalculate
+
+        emp = att.employee
+        sg  = emp.salary_grade
+
+        if not sg:
+            return
+
+        hourly_rate = Decimal(str(sg.hourly_rate))
+        ot_rate     = Decimal(str(sg.overtime_rate))
+
+        # Sum hours_worked across all attendance in period
+        att_qs = Attendance.objects.filter(
+            employee=emp,
+            date__gte=period.start_date,
+            date__lte=period.end_date,
+        )
+        hours_agg    = att_qs.aggregate(t=Sum('total_hours'))
+        hours_worked = Decimal(str(hours_agg['t'] or 0))
+        late_minutes = att_qs.aggregate(t=Sum('late_minutes'))['t'] or 0
+        days_present = att_qs.filter(status__in=['present','late']).count()
+        days_absent  = att_qs.filter(status='absent').count()
+
+        basic_pay     = (hourly_rate * hours_worked).quantize(Decimal('0.01'), ROUND_HALF_UP)
+        daily_rate    = hourly_rate * Decimal('8')
+        monthly_equiv = hourly_rate * Decimal('8') * Decimal('22')
+
+        running       = basic_pay
+        total_earn    = basic_pay
+        total_deduct  = Decimal('0')
+
+        vars_ctx = {
+            'basic_pay':     float(basic_pay),
+            'hourly_rate':   float(hourly_rate),
+            'daily_rate':    float(daily_rate),
+            'monthly_equiv': float(monthly_equiv),
+            'hours_worked':  float(hours_worked),
+            'days_present':  days_present,
+            'days_absent':   days_absent,
+            'late_minutes':  late_minutes,
+            'ot_hours':      0.0,
+            'ot_rate':       float(ot_rate),
+            'working_days':  22,
+            'gross_pay':     float(basic_pay),
+        }
+
+        PayrollBreakdown.objects.filter(payroll=payroll).delete()
+
+        components = PayrollComponent.objects.filter(is_active=True).order_by('sort_order','id')
+        for comp in components:
+            override = EmployeePayrollComponent.objects.filter(
+                employee=emp, component=comp, is_active=True
+            ).first()
+            override_val = Decimal(str(override.value)) if override else None
+
+            if comp.calculation_type == 'percentage':
+                pct      = float(override_val if override_val else comp.default_value)
+                base_key = comp.pct_base or 'monthly_equiv'
+                base_val = vars_ctx.get(base_key, vars_ctx['monthly_equiv'])
+                amount   = Decimal(str(base_val * pct / 100))
+            elif comp.calculation_type == 'formula' and comp.formula:
+                amount = _eval_formula_with_vars(comp.formula, vars_ctx)
+            else:
+                amount = Decimal(str(override_val if override_val else comp.default_value))
+
+            op = comp.operator or ('+' if comp.type == 'earning' else '-')
+            if   op == '+': running = running + amount
+            elif op == '-': running = running - amount
+            elif op == '*': running = running * amount if amount else running
+            elif op == '/': running = (running / amount).quantize(Decimal('0.01')) if amount else running
+
+            delta = running - (running - amount if op == '+' else running + amount)
+            PayrollBreakdown.objects.create(
+                payroll=payroll, component=comp,
+                amount=amount, description=comp.description or comp.name,
+            )
+            if comp.type == 'earning':
+                total_earn += amount
+            else:
+                total_deduct += amount
+
+            vars_ctx['gross_pay'] = float(running)
+
+        # Apply adjustments
+        for adj in Adjustment.objects.filter(employee=emp, payroll_period=period):
+            adj_amount = Decimal(str(adj.amount))
+            if adj.type == 'overtime':
+                running    += adj_amount
+                total_earn += adj_amount
+            elif adj.type == 'leave':
+                if adj_amount >= 0:
+                    running    += adj_amount
+                    total_earn += adj_amount
+                else:
+                    deduct = abs(adj_amount)
+                    running      -= deduct
+                    total_deduct += deduct
+
+        payroll.basic_pay        = basic_pay
+        payroll.gross_pay        = total_earn.quantize(Decimal('0.01'))
+        payroll.total_deductions = total_deduct.quantize(Decimal('0.01'))
+        payroll.net_pay          = running.quantize(Decimal('0.01'))
+        payroll.save()
+
+    except Exception as e:
+        # Non-fatal — log but don't crash the attendance save
+        import logging
+        logging.getLogger(__name__).warning(f'Payroll recompute failed after attendance edit: {e}')
+        
+
+
+@require_POST
+def grant_overtime(request):
+    """
+    AJAX POST: Grants overtime hours for an employee on a specific date.
+    Called from the quick-grant OT modal on the attendance calendar.
+
+    Body: { employee_id, date, hours, description }
+    Returns: { ok: true } or { ok: false, error: "..." }
+    """
+    try:
+        body    = json.loads(request.body)
+        emp_id  = int(body.get('employee_id', 0))
+        datestr = body.get('date', '').strip()
+        hours   = float(body.get('hours', 0))
+        desc    = body.get('description', '').strip()
+    except Exception:
+        return JsonResponse({'ok': False, 'error': 'Invalid input.'}, status=400)
+
+    if not emp_id or not datestr or hours <= 0:
+        return JsonResponse({'ok': False, 'error': 'employee_id, date and hours are required.'})
+
+    try:
+        att_date = date.fromisoformat(datestr)
+        employee = Employee.objects.select_related('salary_grade').get(pk=emp_id, status='active')
+    except (ValueError, Employee.DoesNotExist):
+        return JsonResponse({'ok': False, 'error': 'Employee or date not found.'})
+
+    # Block if payroll confirmed for this date
+    from payroll.models import PayrollPeriod as PP, Payroll as PayrollModel
+    period = PP.objects.filter(
+        start_date__lte=att_date,
+        end_date__gte=att_date,
+    ).first()
+    if period:
+        locked = PayrollModel.objects.filter(
+            employee=employee, payroll_period=period, is_confirmed=True
+        ).exists()
+        if locked:
+            return JsonResponse({
+                'ok': False,
+                'error': 'Payroll for this period is already confirmed. OT cannot be changed.'
+            })
+
+    # Create/update the adjustment
+    adj = _upsert_adjustment_for_date(
+        employee    = employee,
+        att_date    = att_date,
+        adj_type    = 'overtime',
+        hours       = hours,
+        description = desc or f'Overtime on {datestr}',
+        created_by  = request.user,
+    )
+
+    # Write audit log
+    sg     = employee.salary_grade
+    ot_rate = float(sg.overtime_rate) if sg else 0
+    AuditLog.objects.create(
+        user       = request.user,
+        action     = 'OT_GRANT',
+        table_name = 'payroll_adjustment',
+        record_id  = adj.id if adj else None,
+        new_value  = {
+            'employee':    f'{employee.first_name} {employee.last_name}',
+            'date':        datestr,
+            'hours':       hours,
+            'ot_rate':     ot_rate,
+            'amount':      round(hours * ot_rate, 2),
+        },
+        timestamp  = timezone.now(),
+    )
+
+    # Recompute draft payroll for this period
+    att_record = Attendance.objects.filter(employee=employee, date=att_date).first()
+    if att_record:
+        _recompute_payroll_for_attendance(att_record)
+
+    return JsonResponse({'ok': True, 'hours': hours, 'amount': round(hours * ot_rate, 2)})

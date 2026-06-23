@@ -499,8 +499,9 @@ def create_grade(request):
         return redirect('payroll:components')
     SalaryGrade.objects.create(
         name          = request.POST.get('name', '').strip(),
-        base_salary   = request.POST.get('base_salary', 0),
+        hourly_rate   = request.POST.get('hourly_rate', 0),
         overtime_rate = request.POST.get('overtime_rate', 0),
+        # base_salary auto-computed in model.save()
     )
     messages.success(request, 'Salary grade created.')
     return redirect('payroll:components')
@@ -511,9 +512,9 @@ def update_grade(request, pk):
     sg = get_object_or_404(SalaryGrade, pk=pk)
     if request.method == 'POST':
         sg.name          = request.POST.get('name', sg.name).strip()
-        sg.base_salary   = request.POST.get('base_salary', sg.base_salary)
+        sg.hourly_rate   = request.POST.get('hourly_rate', sg.hourly_rate)
         sg.overtime_rate = request.POST.get('overtime_rate', sg.overtime_rate)
-        sg.save()
+        sg.save()  # base_salary auto-recomputed in save()
         messages.success(request, f'Salary grade "{sg.name}" updated.')
     return redirect('payroll:components')
 
@@ -525,8 +526,9 @@ def get_grade(request, pk):
     return JsonResponse({
         'id':            sg.id,
         'name':          sg.name,
-        'base_salary':   str(sg.base_salary),
+        'hourly_rate':   str(sg.hourly_rate),
         'overtime_rate': str(sg.overtime_rate),
+        'base_salary':   str(sg.base_salary),   # read-only display
     })
 
 
