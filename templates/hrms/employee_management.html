@@ -62,7 +62,6 @@
 {% endblock %}
 
 {% block content %}
-<!-- ── Stats ── -->
 <div class="emp-stats">
   <div class="stat-card">
     <div class="stat-icon blue">👥</div>
@@ -80,9 +79,21 @@
     <div class="stat-icon gold">📋</div>
     <div><div class="stat-num">{{ stats.contract }}</div><div class="stat-label">Contractual</div></div>
   </div>
+  
+  {% if stats.expiring_soon %}
+  <div class="stat-card" style="border-left:3px solid var(--warning);">
+    <div class="stat-icon gold">⚠</div>
+    <div><div class="stat-num">{{ stats.expiring_soon }}</div><div class="stat-label">Contracts Expiring Soon</div></div>
+  </div>
+  {% endif %}
+  {% if stats.expired_contracts %}
+  <div class="stat-card" style="border-left:3px solid var(--danger);">
+    <div class="stat-icon red">🚫</div>
+    <div><div class="stat-num">{{ stats.expired_contracts }}</div><div class="stat-label">Expired Contracts (Active)</div></div>
+  </div>
+  {% endif %}
 </div>
 
-<!-- ── Filters ── -->
 <div class="filters-bar">
   <div class="search-bar" style="flex:1;min-width:220px;">
     <span class="search-icon">🔍</span>
@@ -107,7 +118,6 @@
   <button class="btn btn-outline btn-sm" onclick="exportEmployees()">⬇ Export</button>
 </div>
 
-<!-- ── Table ── -->
 <div class="card">
   <div class="card-header">
     <h3>Employee Directory</h3>
@@ -152,6 +162,14 @@
             <span class="badge {% if emp.status == 'active' %}badge-success{% else %}badge-danger{% endif %}">
               {{ emp.status|title }}
             </span>
+            {% if emp.is_contract_expired %}
+              <span class="badge badge-danger" style="font-size:.68rem;margin-left:.3rem;">⚠ Contract Expired</span>
+            {% elif emp.employment_type == "contract" and emp.contract_end %}
+              {% now "Y-m-d" as today_str %}
+              <span class="badge badge-warning" style="font-size:.68rem;margin-left:.3rem;">
+                Ends {{ emp.contract_end|date:"M d, Y" }}
+              </span>
+            {% endif %}
           </td>
           <td>
             <div class="action-btns">
@@ -168,7 +186,6 @@
     </table>
   </div>
 
-  <!-- Pagination -->
   <div style="padding:1rem 1.5rem;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--gray-200);">
     <span class="text-sm text-gray">Page {{ employees.number }} of {{ employees.paginator.num_pages }}</span>
     <div class="pagination">
@@ -189,15 +206,6 @@
   </div>
 </div>
 
-<!-- ══ ADD / EDIT EMPLOYEE MODAL ══
-     NOTE: Fields are dynamically derived from the Employee model.
-     Each field follows its database column data type:
-       - CharField → <input type="text">
-       - EmailField → <input type="email">
-       - DateField → <input type="date">
-       - ForeignKey → <select> populated from related model
-       - CharField with choices → <select> with defined choices
--->
 <div class="modal-backdrop" id="add-employee-modal">
   <div class="modal">
     <div class="modal-header">
@@ -205,7 +213,6 @@
       <button class="btn-close" onclick="closeModal('add-employee-modal')">✕</button>
     </div>
     <div class="modal-body">
-      <!-- Tab Navigation -->
       <div class="tab-bar">
         <button class="tab-btn active" onclick="switchTab('tab-personal', this)">Personal Info</button>
         <button class="tab-btn" onclick="switchTab('tab-employment', this)">Employment</button>
@@ -216,31 +223,25 @@
         {% csrf_token %}
         <input type="hidden" id="emp-form-id" name="employee_id" value="">
 
-        <!-- Tab 1: Personal Information -->
         <div class="tab-panel active" id="tab-personal">
           <span class="modal-section-label">Personal Information</span>
           <div class="modal-form-grid">
-            <!-- first_name: CharField(max_length=100) -->
             <div class="form-group">
               <label class="form-label">First Name <span style="color:var(--danger)">*</span></label>
               <input type="text" name="first_name" class="form-control" maxlength="100" required placeholder="Juan">
             </div>
-            <!-- last_name: CharField(max_length=100) -->
             <div class="form-group">
               <label class="form-label">Last Name <span style="color:var(--danger)">*</span></label>
               <input type="text" name="last_name" class="form-control" maxlength="100" required placeholder="Dela Cruz">
             </div>
-            <!-- email: EmailField(unique=True) -->
             <div class="form-group">
               <label class="form-label">Email <span style="color:var(--danger)">*</span></label>
               <input type="email" name="email" class="form-control" required placeholder="juan@company.com">
             </div>
-            <!-- phone: CharField -->
             <div class="form-group">
               <label class="form-label">Phone</label>
               <input type="tel" name="phone" class="form-control" placeholder="+63 912 345 6789">
             </div>
-            <!-- address: TextField -->
             <div class="form-group full">
               <label class="form-label">Address</label>
               <textarea name="address" class="form-control" rows="2" placeholder="Street, City, Province"></textarea>
@@ -248,28 +249,24 @@
           </div>
         </div>
 
-        <!-- Tab 2: Employment Details -->
         <div class="tab-panel" id="tab-employment">
           <span class="modal-section-label">Employment Details</span>
           <div class="modal-form-grid">
-            <!-- employee_code: CharField(unique=True) -->
             <div class="form-group">
               <label class="form-label">Employee Code <span style="color:var(--danger)">*</span></label>
               <input type="text" name="employee_code" id="emp-code-input" class="form-control"
-       value="{{ next_emp_code }}"
-       placeholder="{{ next_emp_code }}"
-       required
-       style="font-family:monospace;font-weight:700;color:var(--blue-800);">
-<div style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem;">
-  Auto-generated. You may override it, but it must be unique.
-</div>
+                     value="{{ next_emp_code }}"
+                     placeholder="{{ next_emp_code }}"
+                     required
+                     style="font-family:monospace;font-weight:700;color:var(--blue-800);">
+              <div style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem;">
+                Auto-generated. You may override it, but it must be unique.
+              </div>
             </div>
-            <!-- date_hired: DateField -->
             <div class="form-group">
               <label class="form-label">Date Hired <span style="color:var(--danger)">*</span></label>
               <input type="date" name="date_hired" class="form-control" required>
             </div>
-            <!-- employment_type: CharField choices=['regular','contract'] -->
             <div class="form-group">
               <label class="form-label">Employment Type <span style="color:var(--danger)">*</span></label>
               <select name="employment_type" class="form-control" required>
@@ -278,7 +275,6 @@
                 <option value="contract">Contract</option>
               </select>
             </div>
-            <!-- status: CharField choices=['active','inactive'] -->
             <div class="form-group">
               <label class="form-label">Status</label>
               <select name="status" class="form-control">
@@ -286,7 +282,6 @@
                 <option value="inactive">Inactive</option>
               </select>
             </div>
-            <!-- department_id: ForeignKey → Department -->
             <div class="form-group">
               <label class="form-label">Department</label>
               <select name="department_id" class="form-control" id="dept-select" onchange="loadPositions(this.value)">
@@ -296,14 +291,13 @@
                 {% endfor %}
               </select>
             </div>
-            <!-- position_id: ForeignKey → Position (filtered by department) -->
             <div class="form-group">
               <label class="form-label">Position</label>
-              <select name="position_id" class="form-control" id="position-select">
+              <select name="position_id" class="form-control" id="position-select" onchange="onPositionChange(this)">
                 <option value="">Select department first…</option>
               </select>
+              <div id="position-salary-hint" style="font-size:.75rem;margin-top:.3rem;"></div>
             </div>
-            <!-- salary_grade_id: ForeignKey → SalaryGrade -->
             <div class="form-group full">
               <label class="form-label">Salary Grade</label>
               <select name="salary_grade_id" class="form-control">
@@ -316,7 +310,6 @@
           </div>
         </div>
 
-        <!-- Tab 3: Contact / Account -->
         <div class="tab-panel" id="tab-contact">
           <span class="modal-section-label">System Account (Optional)</span>
           <div class="modal-form-grid">
@@ -357,7 +350,6 @@
   </div>
 </div>
 
-<!-- ── Delete Confirm Modal ── -->
 <div class="modal-backdrop" id="delete-confirm-modal">
   <div class="modal" style="max-width:380px;">
     <div class="modal-header"><h2>Confirm Delete</h2><button class="btn-close" onclick="closeModal('delete-confirm-modal')">✕</button></div>
@@ -451,26 +443,51 @@
       const rStat  = row.dataset.status || '';
       const rType  = row.dataset.type   || '';
       const show = (!q || text.includes(q))
-                && (!dept   || rDept  === dept)
-                && (!status || rStat  === status)
-                && (!type   || rType  === type);
+                && (!dept   || rDept   === dept)
+                && (!status || rStat   === status)
+                && (!type   || rType   === type);
       row.style.display = show ? '' : 'none';
       if (show) count++;
     });
     document.getElementById('emp-count').textContent = `Showing ${count} employees`;
   }
 
-  // ── Load positions by department (AJAX) ───────────────────
+  // ── Integrated Load Positions & Change Events ──────────────
   async function loadPositions(deptId) {
-    const sel = document.getElementById('position-select');
+    const sel     = document.getElementById('position-select');
+    const hint    = document.getElementById('position-salary-hint');
     sel.innerHTML = '<option value="">Loading…</option>';
-    if (!deptId) { sel.innerHTML = '<option value="">Select department first…</option>'; return; }
+    if (hint) hint.textContent = '';
+    if (!deptId) {
+      sel.innerHTML = '<option value="">Select department first…</option>';
+      return;
+    }
     try {
-      const res = await fetch(`{% url 'employees:positions_by_dept' %}?dept_id=${deptId}`);
+      const res  = await fetch(`{% url 'employees:positions_by_dept' %}?dept_id=${deptId}`);
       const data = await res.json();
       sel.innerHTML = '<option value="">Select position…</option>' +
-        data.positions.map(p => `<option value="${p.id}">${p.name}</option>`).join('');
-    } catch { sel.innerHTML = '<option value="">Error loading positions</option>'; }
+        data.positions.map(p =>
+          `<option value="${p.id}" data-salary="${p.base_salary || 0}" data-count="${p.emp_count || 0}">
+            ${p.name}${p.base_salary > 0 ? ' — ref ₱' + parseFloat(p.base_salary).toLocaleString('en-PH', {minimumFractionDigits:2}) : ''}
+          </option>`
+        ).join('');
+    } catch {
+      sel.innerHTML = '<option value="">Error loading positions</option>';
+    }
+  }
+
+  function onPositionChange(sel) {
+    const opt  = sel.options[sel.selectedIndex];
+    const hint = document.getElementById('position-salary-hint');
+    if (!hint) return;
+    const salary = parseFloat(opt?.dataset?.salary || 0);
+    const count  = parseInt(opt?.dataset?.count || 0);
+    if (salary > 0) {
+      hint.textContent = `Reference salary: ₱${salary.toLocaleString('en-PH', {minimumFractionDigits:2})} · ${count} employee(s) in this position`;
+      hint.style.color = 'var(--blue-700)';
+    } else {
+      hint.textContent = count > 0 ? `${count} employee(s) in this position` : '';
+    }
   }
 
   // ── Submit employee form ───────────────────────────────────
@@ -494,7 +511,6 @@
         const input = form.querySelector(`[name="${key}"]`);
         if (input) input.value = val ?? '';
       }
-      // Pre-select the role dropdown from SystemUser role
       const roleSelect = document.getElementById('role-id-select');
       if (roleSelect) roleSelect.value = emp.role_id ?? '';
       openModal('add-employee-modal');
@@ -525,7 +541,7 @@
 </script>
 
 <script>
-  // ── Auto-open credentials modal if session has new employee data ──────────
+  // ── Auto-open credentials modal ────────────────────────────
   {% if request.session.new_employee_credentials %}
   const newCreds = {{ request.session.new_employee_credentials|safe }};
   document.addEventListener('DOMContentLoaded', () => {
@@ -539,7 +555,6 @@
   });
   {% endif %}
 
-  // Store plain password for toggle
   let _plainPassword = '';
   let _pwdVisible = false;
 
@@ -549,11 +564,9 @@
     document.getElementById('cred-code').textContent      = code;
     document.getElementById('cred-username').textContent  = username;
     document.getElementById('cred-role').textContent      = role;
-    // Show as dots by default
     document.getElementById('cred-password').textContent  = '••••••••••';
     _pwdVisible = false;
     openModal('credentials-modal');
-    // Clear from session via AJAX so it doesn't show again on refresh
     fetch("{% url 'employees:clear_credentials_session' %}", {
       method: 'POST',
       headers: { 'X-CSRFToken': getCsrfToken() },
@@ -569,7 +582,6 @@
   function closeCredentialsModal() {
     _plainPassword = '';
     closeModal('credentials-modal');
-    // Re-generate the employee code field for the next new employee
     fetch("{% url 'employees:next_code' %}")
       .then(r => r.json())
       .then(d => {
@@ -591,5 +603,4 @@
     });
   }
 </script>
-
 {% endblock %}

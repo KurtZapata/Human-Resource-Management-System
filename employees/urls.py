@@ -76,4 +76,7 @@ urlpatterns = [
     
     path('<int:pk>/update-role/',
          views.update_employee_role,  name='update_employee_role'),
+
+    path('<int:pk>/update-role/',
+         views.update_employee_role, name='update_employee_role'),
 ]

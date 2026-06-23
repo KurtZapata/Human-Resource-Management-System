@@ -10,7 +10,7 @@ from django.contrib.auth.decorators import login_required
 from accounts.access import admin_required, is_super_admin, is_hr_admin
 from django.contrib import messages
 from django.views.decorators.http import require_POST
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponse
 from django.utils import timezone
 
 from .models import AuditLog
@@ -27,7 +27,7 @@ def login_view(request):
 
     # Pull branding from settings (stored in a simple Settings model or env)
     context = {
-        'company_name':    _get_setting('company_name', 'Your Company'),
+        'company_name':     _get_setting('company_name', 'Your Company'),
         'company_initials': _get_setting('company_initials', 'HR'),
         'login_bg_image':  _get_setting('login_bg_image', ''),
     }
@@ -56,15 +56,16 @@ def login_view(request):
                 timestamp=timezone.now(),
             )
 
+            # --- Integrated Role-Aware Redirect Logic ---
             from accounts.access import has_admin_role
             next_url = request.POST.get('next') or request.GET.get('next') or ''
 
             if next_url:
                 return redirect(next_url)
             elif has_admin_role(user):
-                return redirect('employees:list')   # → admin employee list
+                return redirect('employees:list')      # admin → employee list
             else:
-                return redirect('attendance:timein')  # → employee time-in portal
+                return redirect('attendance:timein')   # employee → time-in portal
         else:
             context['form'] = type('F', (), {'errors': True})()   # signal template to show error
 
@@ -113,7 +114,7 @@ def audit_log_view(request):
     # CSV export
     if request.GET.get('export') == 'csv':
         response = HttpResponse(content_type='text/csv')
-        response['Content-Disposition'] = 'attachment; filename="audit_log.csv"'
+        response['Content-Disposition'] = 'attachment; filename=\"audit_log.csv\"'
         writer = _csv.writer(response)
         writer.writerow(['Timestamp','User','Action','Table','Record ID','Old Value','New Value'])
         for log in logs:
@@ -126,8 +127,8 @@ def audit_log_view(request):
 
     # Action summary counts (top 5 actions)
     action_summary = AuditLog.objects.values('action')\
-                         .annotate(count=Count('id'))\
-                         .order_by('-count')[:5]
+                             .annotate(count=Count('id'))\
+                             .order_by('-count')[:5]
 
     from django.core.paginator import Paginator
     paginator = Paginator(logs, 50)

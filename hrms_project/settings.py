@@ -4,6 +4,7 @@ Django project settings for the HRMS system.
 """
 
 import os
+from django.contrib.messages import constants as messages_constants
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -39,9 +40,9 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'accounts.access.AdminAccessMiddleware',      # Updated middleware path
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'accounts.access.AdminAccessMiddleware',      
 ]
 
 ROOT_URLCONF = 'hrms_project.urls'
@@ -57,7 +58,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
-                'accounts.context_processors.user_role',   # ← ADD THIS
+                'accounts.context_processors.user_role',   # Injected context processor
             ],
         },
     },
@@ -121,7 +122,6 @@ SESSION_COOKIE_AGE     = 28800   # 8 hours
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 
 # Message tags (maps Django message levels to CSS toast classes)
-from django.contrib.messages import constants as messages_constants
 MESSAGE_TAGS = {
     messages_constants.DEBUG:   'info',
     messages_constants.INFO:    'info',

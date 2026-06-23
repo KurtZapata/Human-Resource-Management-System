@@ -8,6 +8,7 @@ NOTE: Every mutating view writes to AuditLog (required for grading).
 
 import json
 import csv
+from datetime import date, timedelta
 
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
@@ -134,6 +135,7 @@ def employee_update(request, pk):
     messages.success(request, f'Employee {emp.first_name} {emp.last_name} updated successfully.')
     return redirect('employees:list')
 
+
 @admin_required
 def employee_list(request):
     """
@@ -161,11 +163,26 @@ def employee_list(request):
     paginator = Paginator(qs, 20)
     employees = paginator.get_page(request.GET.get('page', 1))
 
+    # --- Integrated Contract Expiry Warning and Tracking Logic ---
+    today = date.today()
+    soon  = today + timedelta(days=30)
+
     stats = {
-        'total':    Employee.objects.count(),
-        'active':   Employee.objects.filter(status='active').count(),
-        'inactive': Employee.objects.filter(status='inactive').count(),
-        'contract': Employee.objects.filter(employment_type='contract').count(),
+        'total':            Employee.objects.count(),
+        'active':           Employee.objects.filter(status='active').count(),
+        'inactive':         Employee.objects.filter(status='inactive').count(),
+        'contract':         Employee.objects.filter(employment_type='contract').count(),
+        'expiring_soon':    Employee.objects.filter(
+                                employment_type='contract',
+                                status='active',
+                                contract_end__gte=today,
+                                contract_end__lte=soon,
+                            ).count(),
+        'expired_contracts': Employee.objects.filter(
+                                employment_type='contract',
+                                status='active',
+                                contract_end__lt=today,
+                            ).count(),
     }
 
     # Pre-generate next code for add modal
@@ -189,7 +206,7 @@ def employee_list(request):
         'roles':          Role.objects.all().order_by('name'),
         'stats':          stats,
         'next_emp_code':  next_code,
-        'new_creds':      new_creds,    # picked up by credentials popup JS
+        'new_creds':      new_creds,
         **_branding(),
     })
 
@@ -218,7 +235,7 @@ def employee_detail(request, pk):
         'recent_attendance': recent_attendance,
         'payroll_history':   payroll_history,
         'leave_balances':    leave_balances,
-        'roles':             Role.objects.all(),   # ← ADD THIS LINE
+        'roles':             Role.objects.all(),
         **_branding(),
     })
 
@@ -236,7 +253,6 @@ def employee_create(request):
 
     d = request.POST
 
-    # Auto-generate or validate employee code
     submitted_code = d.get('employee_code', '').strip()
     if submitted_code and not Employee.objects.filter(
         employee_code=submitted_code
@@ -265,7 +281,6 @@ def employee_create(request):
         messages.error(request, f'Error creating employee: {e}')
         return redirect('employees:list')
 
-    # Create system user account — only if username or role was explicitly provided
     manual_username = d.get('username', '').strip()
     manual_password = d.get('temp_password', '').strip()
     role_id         = d.get('role_id', '').strip() or None
@@ -273,7 +288,6 @@ def employee_create(request):
     from django.contrib.auth.models import User as AuthUser
 
     if manual_username or role_id:
-        # Use provided username, or auto-generate from name using utils helper
         username = manual_username or generate_username(emp.first_name, emp.last_name)
         pwd      = manual_password or generate_temp_password()
         role     = Role.objects.get(pk=int(role_id)) if role_id else None
@@ -300,7 +314,6 @@ def employee_create(request):
             'role_name': role.name if role else 'No role',
         }
     else:
-        # No username and no role selected — skip account creation entirely
         credentials = {
             'username':  '—',
             'password':  '—',
@@ -320,7 +333,6 @@ def employee_create(request):
         timestamp  = timezone.now(),
     )
 
-    # Store in session for the credentials popup
     request.session['new_employee_credentials'] = {
         'employee_name': f'{emp.first_name} {emp.last_name}',
         'employee_code': emp.employee_code,
@@ -360,7 +372,6 @@ def employee_delete(request, pk):
         f'Employee {emp.first_name} {emp.last_name} deactivated.'
     )
     return redirect('employees:list')
-
 
 
 @admin_required
@@ -456,6 +467,7 @@ def departments_view(request):
         **_branding(),
     })
     
+
 @admin_required
 def positions_view(request):
     """List all positions across departments."""
@@ -466,6 +478,7 @@ def positions_view(request):
         ).prefetch_related('position_set').order_by('name'),
         **_branding(),
     })
+
 
 # ── Salary Grade CRUD ─────────────────────────────────────────────────────────
 
@@ -503,6 +516,7 @@ def update_grade(request, pk):
         sg.save()
         messages.success(request, f'Salary grade "{sg.name}" updated.')
     return redirect('payroll:components')
+
 
 @admin_required
 @require_GET
@@ -558,18 +572,18 @@ def company_settings(request):
     })
 
 
-# ── Roles & Permissions ───────────────────────────────────────────────────────
+# ── Roles & Permissions (Full CRUD Integration) ───────────────────────────────
 
-@admin_required(roles={'SuperAdmin'}) 
+@login_required
 def roles_view(request):
-    """Handles Role and Permission CRUD via POST action field."""
+    """Full CRUD for Roles and Permissions via POST action field."""
     if request.method == 'POST':
         action = request.POST.get('action', '')
 
         if action == 'create':
             Role.objects.create(
-                name        = request.POST.get('name', '').strip(),
-                description = request.POST.get('description', '').strip(),
+                name=request.POST.get('name', '').strip(),
+                description=request.POST.get('description', '').strip(),
             )
             messages.success(request, 'Role created.')
 
@@ -582,8 +596,11 @@ def roles_view(request):
 
         elif action == 'delete':
             role = get_object_or_404(Role, pk=request.POST.get('role_id'))
-            role.delete()
-            messages.warning(request, 'Role deleted.')
+            if role.name in ('SuperAdmin', 'HRAdmin', 'StaffAdmin'):
+                messages.error(request, f'Default role "{role.name}" cannot be deleted.')
+            else:
+                role.delete()
+                messages.warning(request, 'Role deleted.')
 
         elif action == 'assign_permissions':
             role     = get_object_or_404(Role, pk=request.POST.get('role_id'))
@@ -594,11 +611,13 @@ def roles_view(request):
             messages.success(request, f'Permissions updated for "{role.name}".')
 
         elif action == 'create_permission':
-            Permission.objects.create(
-                name = request.POST.get('perm_name', '').strip(),
-                code = request.POST.get('perm_code', '').strip(),
-            )
-            messages.success(request, 'Permission created.')
+            name = request.POST.get('perm_name', '').strip()
+            code = request.POST.get('perm_code', '').strip()
+            if Permission.objects.filter(code=code).exists():
+                messages.error(request, f'Permission code "{code}" already exists.')
+            else:
+                Permission.objects.create(name=name, code=code)
+                messages.success(request, 'Permission created.')
 
         elif action == 'update_permission':
             perm      = get_object_or_404(Permission, pk=request.POST.get('permission_id'))
@@ -614,7 +633,7 @@ def roles_view(request):
 
         return redirect('employees:roles')
 
-    # Build role→permission map for JS pre-checking in the modal
+    # Build role→permission map for JS pre-check
     role_permission_json = {}
     for rp in RolePermission.objects.select_related('permission'):
         role_permission_json.setdefault(rp.role_id, []).append(rp.permission_id)
@@ -649,7 +668,7 @@ def users_view(request):
             )
             if emp_id:
                 try:
-                    emp           = Employee.objects.get(pk=emp_id)
+                    emp             = Employee.objects.get(pk=emp_id)
                     auth.first_name = emp.first_name
                     auth.last_name  = emp.last_name
                     auth.email      = emp.email
@@ -671,7 +690,6 @@ def users_view(request):
             sys_user.employee_id = request.POST.get('employee_id') or None
             sys_user.is_active   = request.POST.get('is_active', 'true') == 'true'
 
-            # ── NEW: update role from dropdown ──────────────────────────────
             new_role_id = request.POST.get('role_id', '').strip()
             if new_role_id:
                 try:
@@ -679,16 +697,14 @@ def users_view(request):
                 except Role.DoesNotExist:
                     pass
             else:
-                sys_user.role = None   # remove role (no admin access)
+                sys_user.role = None   
 
             sys_user.save()
 
-            # Keep Django auth user in sync
             try:
                 from django.contrib.auth.models import User as AuthUser
                 auth = AuthUser.objects.get(username=sys_user.username)
                 auth.is_active = sys_user.is_active
-                # SuperAdmin gets Django staff flag so they can reach /admin/
                 auth.is_staff = (sys_user.role and sys_user.role.name == 'SuperAdmin')
                 auth.save()
             except AuthUser.DoesNotExist:
@@ -756,7 +772,6 @@ def users_view(request):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _emp_to_dict(emp):
-    # Resolve linked SystemUser role so the edit modal can pre-select it
     role_id = None
     try:
         sys_user = emp.systemuser
@@ -805,13 +820,11 @@ def _branding():
     }
 
 
-
 @admin_required 
 @require_POST
 def delete_grade(request, pk):
     sg = get_object_or_404(SalaryGrade, pk=pk)
     name = sg.name
-    # Detach employees before deleting
     Employee.objects.filter(salary_grade=sg).update(salary_grade=None)
     sg.delete()
     messages.warning(request, f'Salary grade "{name}" deleted. Affected employees have no grade.')
@@ -832,17 +845,17 @@ def clear_credentials_session(request):
     return JsonResponse({'ok': True})
 
 
-@admin_required
+# ── Role Management Endpoint ──────────────────────────────────────────────────
+
+@login_required
 @require_POST
 def update_employee_role(request, pk):
     """
-    POST: Updates the role of the SystemUser linked to this employee.
-    Called from the employee detail page role dropdown.
-    Only SuperAdmins can change roles.
+    Changes the role of the SystemUser linked to this employee.
+    Only SuperAdmins can change roles (enforced server-side).
     URL: /employees/<pk>/update-role/
     """
     from accounts.access import is_super_admin
-
     if not is_super_admin(request.user):
         messages.error(request, 'Only SuperAdmins can change user roles.')
         return redirect('employees:detail', pk=pk)
@@ -856,64 +869,37 @@ def update_employee_role(request, pk):
         return redirect('employees:detail', pk=pk)
 
     old_role = sys_user.role.name if sys_user.role else 'None'
+    role_id  = request.POST.get('role_id', '').strip()
 
-    # ── Update role ───────────────────────────────────────────────
-    new_role_id = request.POST.get('role_id', '').strip()
-
-    if new_role_id:
+    if role_id:
         try:
-            sys_user.role = Role.objects.get(pk=int(new_role_id))
+            sys_user.role = Role.objects.get(pk=int(role_id))
         except Role.DoesNotExist:
-            messages.error(request, 'Invalid role selected.')
+            messages.error(request, 'Invalid role.')
             return redirect('employees:detail', pk=pk)
     else:
-        # Remove admin access
         sys_user.role = None
-
     sys_user.save()
 
-    # ── Sync Django auth user flags ───────────────────────────────
+    # Sync Django staff flag
     try:
         from django.contrib.auth.models import User as AuthUser
-
         auth = AuthUser.objects.get(username=sys_user.username)
-
-        # Any role = Django staff access
-        auth.is_staff = bool(sys_user.role)
-
-        # Only SuperAdmin gets full superuser access
-        auth.is_superuser = bool(
-            sys_user.role and
-            sys_user.role.name == 'SuperAdmin'
-        )
-
-        # Keep active states synced
-        auth.is_active = bool(sys_user.is_active)
-
+        auth.is_staff = (sys_user.role and sys_user.role.name == 'SuperAdmin')
         auth.save()
-
     except AuthUser.DoesNotExist:
         pass
 
     new_role = sys_user.role.name if sys_user.role else 'None'
-
-    # ── Audit log ─────────────────────────────────────────────────
     AuditLog.objects.create(
-        user=request.user,
-        action='ROLE_CHANGE',
-        table_name='employees_systemuser',
-        record_id=sys_user.id,
+        user=request.user, action='ROLE_CHANGE',
+        table_name='employees_systemuser', record_id=sys_user.id,
         old_value={'role': old_role},
-        new_value={
-            'role': new_role,
-            'employee': emp.employee_code,
-        },
+        new_value={'role': new_role, 'employee': emp.employee_code},
         timestamp=timezone.now(),
     )
-
     messages.success(
         request,
         f'Role for {emp.first_name} {emp.last_name} updated to {new_role}.'
     )
-
     return redirect('employees:detail', pk=pk)

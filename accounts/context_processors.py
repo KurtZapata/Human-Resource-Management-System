@@ -1,9 +1,9 @@
 """
-apps/accounts/context_processors.py
-Makes user_role, is_super_admin, and is_hr_admin available in every template.
+accounts/context_processors.py
+Makes user_role, is_super_admin, is_hr_admin, and is_staff_admin available globally in templates.
 
-Add to settings.py TEMPLATES context_processors list:
-    'apps.accounts.context_processors.user_role',
+Add to settings.py TEMPLATES -> OPTIONS -> context_processors list:
+    'accounts.context_processors.user_role',
 """
 
 from .access import get_user_role
@@ -22,9 +22,9 @@ def user_role(request):
             'is_staff_admin': False,
         }
 
-    role = get_user_role(request.user)
+    role      = get_user_role(request.user)
     role_name = role.name if role else ''
-
+    
     return {
         'user_role':      role,
         'is_super_admin': role_name == 'SuperAdmin',
