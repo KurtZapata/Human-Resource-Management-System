@@ -22,6 +22,7 @@ from django.utils import timezone
 from django.db import transaction
 from accounts.access import admin_required, is_super_admin, is_hr_admin
 from django.db.models import Q, Sum, Max, Count
+from datetime import timedelta
 
 from .models import (
     PayrollComponent, PayrollPeriod, Payroll,
@@ -45,6 +46,7 @@ FORMULA_VARIABLES = [
     {'name': 'late_minutes',  'label': 'Late Minutes',       'description': 'Total late minutes this period'},
     {'name': 'working_days',  'label': 'Working Days',       'description': 'Standard = 22'},
 ]
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  WEBPAGE #6 — Configurable Salary Page
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -171,7 +173,6 @@ def get_component(request, pk):
     return JsonResponse(_comp_to_dict(comp))
 
 
-
 @admin_required
 def reorder_components(request):
     if request.method != 'POST':
@@ -231,10 +232,6 @@ def payroll_periods(request):
             messages.error(request, 'End date must be after start date.')
             return redirect('payroll:periods')
 
-        # ── Enforce no date overlap with existing periods ──────────────────
-        # A new period overlaps if any existing period contains any date
-        # in [start, end]. Using DB-level check:
-        #   existing.start_date <= new.end_date AND existing.end_date >= new.start_date
         overlap = PayrollPeriod.objects.filter(
             start_date__lte=end,
             end_date__gte=start,
@@ -257,9 +254,6 @@ def payroll_periods(request):
             f'Payroll period {start.strftime("%b %d, %Y")} → {end.strftime("%b %d, %Y")} created.'
         )
         return redirect('payroll:periods')
-
-    from django.db.models import Count, Sum
-    from datetime import timedelta
 
     periods = PayrollPeriod.objects.order_by('-start_date')
     for p in periods:
@@ -286,6 +280,7 @@ def payroll_periods(request):
         'periods': periods, 'stats': stats, **_branding()
     })
 
+
 @admin_required
 @require_POST
 def close_period(request, pk):
@@ -306,7 +301,6 @@ def close_period(request, pk):
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Payroll Run
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 @admin_required
 def run_payroll(request):
@@ -418,6 +412,54 @@ def run_payroll(request):
                 )
                 PayrollBreakdown.objects.filter(payroll=payroll).delete()
 
+                # ── Calendar: adjust pay for holidays and rest days ──────
+                from calendar_app.models import Calendar
+
+                calendar_bonus = Decimal('0')
+                calendar_deduct = Decimal('0')
+
+                for att_rec in att_qs:
+                    day_hours = Decimal(str(att_rec.total_hours or 0))
+                    if day_hours <= 0:
+                        continue
+
+                    cal_entry = Calendar.objects.filter(date=att_rec.date).first()
+                    if not cal_entry:
+                        continue  # Regular workday — no adjustment needed
+
+                    multiplier = Decimal(str(cal_entry.rate_multiplier or 1))
+
+                    if cal_entry.type == 'rest' and not cal_entry.is_paid:
+                        base_for_day = hourly_rate * day_hours
+                        adjusted     = base_for_day * multiplier
+                        calendar_bonus += (adjusted - base_for_day)
+
+                    elif cal_entry.type in ('regular_holiday', 'special_holiday'):
+                        if cal_entry.is_paid and day_hours > 0:
+                            base_for_day   = hourly_rate * day_hours
+                            adjusted       = base_for_day * multiplier
+                            calendar_bonus += (adjusted - base_for_day)
+                        elif not cal_entry.is_paid and day_hours == 0:
+                            pass
+                        elif not cal_entry.is_paid and day_hours > 0:
+                            base_for_day   = hourly_rate * day_hours
+                            adjusted       = base_for_day * multiplier
+                            calendar_bonus += (adjusted - base_for_day)
+
+                if calendar_bonus > 0:
+                    basic_pay    += calendar_bonus.quantize(Decimal('0.01'), ROUND_HALF_UP)
+                    total_earn   += calendar_bonus.quantize(Decimal('0.01'), ROUND_HALF_UP)
+                    running      += calendar_bonus.quantize(Decimal('0.01'), ROUND_HALF_UP)
+                    PayrollBreakdown.objects.create(
+                        payroll     = payroll,
+                        component   = None,
+                        amount      = calendar_bonus.quantize(Decimal('0.01'), ROUND_HALF_UP),
+                        description = 'Holiday / Rest Day Pay Premium',
+                    )
+
+                vars_ctx['basic_pay'] = float(basic_pay)
+                vars_ctx['gross_pay'] = float(running)
+
                 # ── Apply modular components ────────────────────────────
                 for comp in components:
                     override = EmployeePayrollComponent.objects.filter(
@@ -462,7 +504,6 @@ def run_payroll(request):
                     adj_amount = Decimal(str(adj.amount))
 
                     if adj.type == 'overtime':
-                        # Re-compute from hours × ot_rate in case rate changed
                         computed = (Decimal(str(adj.hours)) * ot_rate).quantize(
                             Decimal('0.01'), ROUND_HALF_UP
                         )
@@ -473,7 +514,6 @@ def run_payroll(request):
                         total_earn += computed
 
                     elif adj.type == 'leave':
-                        # Leave amount is manual — use as-is
                         if adj_amount >= 0:
                             running    += adj_amount
                             total_earn += adj_amount
@@ -502,7 +542,7 @@ def run_payroll(request):
         return redirect('payroll:report')
 
     return render(request, 'hrms/payroll_run.html', {
-        'periods':          all_periods,
+        'periods':       all_periods,
         'employees':        employees,
         'active_employees': employees.count(),
         'component_count':  components.count(),
@@ -513,11 +553,9 @@ def run_payroll(request):
     })
 
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Payslips
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 @admin_required
 def payslips_view(request):
@@ -541,16 +579,15 @@ def payslips_view(request):
         })
 
     payrolls = Payroll.objects.filter(payroll_period=current_period)\
-                   .select_related('employee','employee__department',
-                                   'employee__position','employee__salary_grade')\
-                   .order_by('employee__last_name')
+                      .select_related('employee','employee__department',
+                                      'employee__position','employee__salary_grade')\
+                      .order_by('employee__last_name')
 
     agg = payrolls.aggregate(
         gross_pay=Sum('gross_pay'), total_deductions=Sum('total_deductions'), net_pay=Sum('net_pay')
     )
     totals = {k: v or 0 for k, v in agg.items()}
 
-    # Build payroll JSON for JS print
     from payroll.views_report import _build_payroll_json
     payroll_json = _json.dumps(_build_payroll_json(payrolls))
 
@@ -579,9 +616,7 @@ def adjustments_view(request):
             description = request.POST.get('description', '').strip()
             leave_type_id = request.POST.get('leave_type_id') or None
 
-            # ── Compute amount ────────────────────────────────────────────
             if adj_type == 'overtime':
-                # Auto-compute: hours × employee's OT rate
                 try:
                     emp  = Employee.objects.select_related('salary_grade').get(pk=emp_id)
                     rate = Decimal(str(emp.salary_grade.overtime_rate)) if emp.salary_grade else Decimal('0')
@@ -590,8 +625,6 @@ def adjustments_view(request):
                 amount = (hours * rate).quantize(Decimal('0.01'), ROUND_HALF_UP)
                 rate_used = rate
             else:
-                # Leave: admin manually inputs the amount
-                # Positive = leave pay addition, Negative = leave deduction
                 amount = Decimal(request.POST.get('amount', '0') or '0')
                 rate_used = Decimal('0')
 
@@ -629,7 +662,6 @@ def adjustments_view(request):
 
         return redirect('payroll:adjustments')
 
-    # ── Filtering ─────────────────────────────────────────────────────────
     qs = Adjustment.objects.select_related(
         'employee', 'employee__salary_grade',
         'payroll_period', 'created_by'
@@ -643,9 +675,6 @@ def adjustments_view(request):
     if adj_type:  qs = qs.filter(type=adj_type)
     if period_id: qs = qs.filter(payroll_period_id=period_id)
 
-    # ── Computed display values ───────────────────────────────────────────
-    # For overtime rows that have amount=0 (legacy / unsaved),
-    # show the computed value from hours × rate
     adj_list = []
     for adj in qs:
         if adj.type == 'overtime' and adj.amount == 0 and adj.hours > 0:
@@ -656,7 +685,6 @@ def adjustments_view(request):
             adj.computed_amount = Decimal(str(adj.amount))
         adj_list.append(adj)
 
-    # ── Summary ───────────────────────────────────────────────────────────
     ot_qs    = qs.filter(type='overtime')
     leave_qs = qs.filter(type='leave')
 
@@ -672,14 +700,12 @@ def adjustments_view(request):
         )),
     }
 
-    from django.core.paginator import Paginator
-    from accounts.models import LeaveType
     paginator   = Paginator(adj_list, 25)
     adjustments = paginator.get_page(request.GET.get('page', 1))
 
     return render(request, 'hrms/adjustments.html', {
         'adjustments':    adjustments,
-        'adj_list_full':  adj_list,    # for summary totals
+        'adj_list_full':  adj_list,
         'summary':        summary,
         'employees':      Employee.objects.filter(status='active').order_by('last_name'),
         'payroll_periods': PayrollPeriod.objects.order_by('-start_date'),
@@ -720,7 +746,6 @@ def _eval_formula_safe(formula, vars_ctx):
         expr = formula
         for k, v in vars_ctx.items():
             expr = expr.replace(k, str(v))
-        # Only allow safe arithmetic characters after substitution
         if not re.fullmatch(r'[\d\.\+\-\*\/\(\)\s]+', expr):
             return None
         result = eval(expr, {'__builtins__': {}}, {})  # noqa: S307
@@ -744,35 +769,27 @@ def compute_employee_payroll(employee, period, components, request_user=None):
     hourly_rate = Decimal(str(sg.hourly_rate)) if sg else Decimal('0')
     ot_rate     = Decimal(str(sg.overtime_rate)) if sg else Decimal('0')
 
-    # ── Step 1: Count actual hours worked from Attendance ──────────────────
     att_qs = Attendance.objects.filter(
         employee=employee,
         date__gte=period.start_date,
         date__lte=period.end_date,
     )
 
-    # Sum total_hours across all attendance records in the period
     hours_agg   = att_qs.aggregate(t=Sum('total_hours'))
     hours_worked = Decimal(str(hours_agg['t'] or 0))
 
-    # Also track late/absent for deduction components
     late_minutes = att_qs.aggregate(t=Sum('late_minutes'))['t'] or 0
     days_present = att_qs.filter(status__in=['present', 'late']).count()
     days_absent  = att_qs.filter(status='absent').count()
 
-    # ── Step 2: Basic Pay = hourly_rate × hours_worked ────────────────────
     basic_pay  = (hourly_rate * hours_worked).quantize(Decimal('0.01'), ROUND_HALF_UP)
 
-    # Derived rates (still useful for formula components like SSS/PhilHealth)
     working_days = Decimal('22')
     daily_rate   = hourly_rate * Decimal('8')
-    # monthly_equiv is used only as base for % deductions (SSS etc.)
     monthly_equiv = hourly_rate * Decimal('8') * working_days
 
-    # ── Step 3: Fetch adjustments ─────────────────────────────────────────
     adj_qs = Adjustment.objects.filter(employee=employee, payroll_period=period)
 
-    # Overtime — amount = ot_hours × ot_rate (computed when saved)
     ot_adjustments = adj_qs.filter(type='overtime')
     total_ot_pay   = sum(
         Decimal(str(adj.amount)) for adj in ot_adjustments
@@ -781,18 +798,16 @@ def compute_employee_payroll(employee, period, components, request_user=None):
         Decimal(str(adj.hours)) for adj in ot_adjustments
     )
 
-    # Leave — amount is manual input by admin (can be positive pay or negative deduction)
     leave_adjustments = adj_qs.filter(type='leave')
     total_leave_adj   = sum(
         Decimal(str(adj.amount)) for adj in leave_adjustments
     )
 
-    # ── Step 4: Build formula variable context ────────────────────────────
     vars_ctx = {
         'basic_pay':     float(basic_pay),
         'hourly_rate':   float(hourly_rate),
         'daily_rate':    float(daily_rate),
-        'monthly_equiv': float(monthly_equiv),  # for SSS/PhilHealth % base
+        'monthly_equiv': float(monthly_equiv),
         'hours_worked':  float(hours_worked),
         'days_present':  days_present,
         'days_absent':   days_absent,
@@ -800,16 +815,14 @@ def compute_employee_payroll(employee, period, components, request_user=None):
         'ot_rate':       float(ot_rate),
         'late_minutes':  late_minutes,
         'working_days':  22,
-        'gross_pay':     float(basic_pay),       # updated as we walk components
+        'gross_pay':     float(basic_pay),
     }
 
-    # ── Step 5: Walk modular components ──────────────────────────────────
     running      = basic_pay
     breakdown    = []
     total_earn   = basic_pay
     total_deduct = Decimal('0')
 
-    # Record Basic Pay as first breakdown line
     breakdown.append({
         'component_id': None,
         'name':         'Basic Pay (Hourly)',
@@ -820,15 +833,11 @@ def compute_employee_payroll(employee, period, components, request_user=None):
     })
 
     for comp in components:
-        # Per-employee override
         override = EmployeePayrollComponent.objects.filter(
             employee=employee, component=comp, is_active=True
         ).first()
         override_val = Decimal(str(override.value)) if override else None
 
-        # Use monthly_equiv as base for percentage deductions
-        # so SSS/PhilHealth are calculated on a standard monthly figure,
-        # not just the hours-based basic pay (which varies by period length)
         if comp.calculation_type == 'percentage' and not override_val:
             pct      = float(comp.default_value)
             base_key = comp.pct_base or 'monthly_equiv'
@@ -862,7 +871,6 @@ def compute_employee_payroll(employee, period, components, request_user=None):
             'description':  comp.description or comp.name,
         })
 
-    # ── Step 6: Apply Overtime adjustments ───────────────────────────────
     for adj in ot_adjustments:
         adj_amount = Decimal(str(adj.amount))
         running      += adj_amount
@@ -876,7 +884,6 @@ def compute_employee_payroll(employee, period, components, request_user=None):
             'description':  f'{adj.hours} hrs × ₱{float(ot_rate):.2f}/hr',
         })
 
-    # ── Step 7: Apply Leave adjustments ──────────────────────────────────
     for adj in leave_adjustments:
         adj_amount = Decimal(str(adj.amount))
         leave_type_name = ''
@@ -888,7 +895,6 @@ def compute_employee_payroll(employee, period, components, request_user=None):
             leave_type_name = 'Leave'
 
         if adj_amount >= 0:
-            # Positive = leave pay (e.g. paid leave allowance)
             running    += adj_amount
             total_earn += adj_amount
             breakdown.append({
@@ -900,7 +906,6 @@ def compute_employee_payroll(employee, period, components, request_user=None):
                 'description':  adj.description or f'{leave_type_name} pay',
             })
         else:
-            # Negative = leave deduction (unpaid leave)
             deduct = abs(adj_amount)
             running      -= deduct
             total_deduct += deduct
@@ -944,24 +949,17 @@ def _compute_component_amount(comp, vars_ctx, override_val=None):
     return Decimal('0')
 
 def _seed_default_components():
-    """
-    Default locked components. Cannot be edited or deleted.
-    Basic Pay is now hourly-based so it is NOT a component —
-    it is computed directly in compute_employee_payroll().
-    Components here handle deductions and allowances only.
-    """
+    """Default locked components. Cannot be edited or deleted."""
     if PayrollComponent.objects.filter(is_locked=True).exists():
         return
 
     DEFAULTS = [
-        # ── DEDUCTIONS (applied to monthly_equiv for consistency) ──────────
         {
             'name': 'SSS Contribution', 'type': 'deduction', 'operator': '-',
             'calculation_type': 'percentage',
             'default_value': '4.5',
             'pct_base': 'monthly_equiv',
-            'description': 'SSS employee share (4.5% of monthly salary equivalent). '
-                           'Adjust per current SSS schedule.',
+            'description': 'SSS employee share (4.5% of monthly salary equivalent). Adjust per current SSS schedule.',
             'sort_order': 10,
         },
         {
@@ -1015,16 +1013,11 @@ def _seed_default_components():
         
         
 def _eval_formula_with_vars(formula, vars_ctx):
-    """
-    Safely evaluates a formula string using the provided variable context.
-    Only allows digits, operators, decimal points, and parentheses after substitution.
-    Returns Decimal result or Decimal('0') on any error.
-    """
+    """Safely evaluates a formula string using the provided variable context."""
     import re
     from decimal import Decimal
     try:
         expr = str(formula)
-        # Substitute longest variable names first to avoid partial matches
         for k in sorted(vars_ctx.keys(), key=len, reverse=True):
             expr = expr.replace(k, str(vars_ctx[k]))
         if re.fullmatch(r'[\d\.\+\-\*\/\(\)\s]+', expr):
@@ -1034,3 +1027,34 @@ def _eval_formula_with_vars(formula, vars_ctx):
     except Exception:
         pass
     return Decimal('0')
+
+
+def _get_calendar_multiplier(check_date):
+    """
+    Returns the pay rate multiplier for a given date from the Calendar table.
+    Returns 1.0 (standard pay) if no calendar entry exists for that date.
+    """
+    try:
+        from calendar_app.models import Calendar
+        entry = Calendar.objects.filter(date=check_date).first()
+        if not entry:
+            return Decimal('1')
+        return Decimal(str(entry.rate_multiplier or 1))
+    except Exception:
+        return Decimal('1')
+
+
+def _is_paid_day(check_date):
+    """
+    Returns True if an absent employee still receives pay for this date.
+    Regular holidays = paid even if absent.
+    Everything else = no pay for absent days.
+    """
+    try:
+        from calendar_app.models import Calendar
+        entry = Calendar.objects.filter(date=check_date).first()
+        if not entry:
+            return False  # Regular workday — absent = no pay for that day
+        return entry.type == 'regular_holiday' and entry.is_paid
+    except Exception:
+        return False

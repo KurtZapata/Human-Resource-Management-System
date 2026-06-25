@@ -65,19 +65,19 @@
 <div class="emp-stats">
   <div class="stat-card">
     <div class="stat-icon blue">👥</div>
-    <div><div class="stat-num">{{ stats.total }}</div><div class="stat-label">Total Employees</div></div>
+    <div><div class="stat-num">{{ stats.total|default:0 }}</div><div class="stat-label">Total Employees</div></div>
   </div>
   <div class="stat-card">
     <div class="stat-icon green">✅</div>
-    <div><div class="stat-num">{{ stats.active }}</div><div class="stat-label">Active</div></div>
+    <div><div class="stat-num">{{ stats.active|default:0 }}</div><div class="stat-label">Active</div></div>
   </div>
   <div class="stat-card">
     <div class="stat-icon red">🚫</div>
-    <div><div class="stat-num">{{ stats.inactive }}</div><div class="stat-label">Inactive</div></div>
+    <div><div class="stat-num">{{ stats.inactive|default:0 }}</div><div class="stat-label">Inactive</div></div>
   </div>
   <div class="stat-card">
     <div class="stat-icon gold">📋</div>
-    <div><div class="stat-num">{{ stats.contract }}</div><div class="stat-label">Contractual</div></div>
+    <div><div class="stat-num">{{ stats.contract|default:0 }}</div><div class="stat-label">Contractual</div></div>
   </div>
   
   {% if stats.expiring_soon %}
@@ -121,7 +121,7 @@
 <div class="card">
   <div class="card-header">
     <h3>Employee Directory</h3>
-    <span class="text-sm text-gray" id="emp-count">Showing {{ employees.count }} employees</span>
+    <span class="text-sm text-gray" id="emp-count">Showing {{ employees.object_list|length }} employees</span>
   </div>
   <div class="table-wrap">
     <table class="data-table" id="emp-table">
@@ -139,7 +139,7 @@
       </thead>
       <tbody id="emp-tbody">
         {% for emp in employees %}
-        <tr data-dept="{{ emp.department_id }}" data-status="{{ emp.status }}" data-type="{{ emp.employment_type }}">
+        <tr data-dept="{{ emp.department_id|default:'' }}" data-status="{{ emp.status }}" data-type="{{ emp.employment_type }}">
           <td>
             <div class="emp-name-cell">
               <div class="emp-avatar">{{ emp.first_name|slice:":1" }}{{ emp.last_name|slice:":1" }}</div>
@@ -165,7 +165,6 @@
             {% if emp.is_contract_expired %}
               <span class="badge badge-danger" style="font-size:.68rem;margin-left:.3rem;">⚠ Contract Expired</span>
             {% elif emp.employment_type == "contract" and emp.contract_end %}
-              {% now "Y-m-d" as today_str %}
               <span class="badge badge-warning" style="font-size:.68rem;margin-left:.3rem;">
                 Ends {{ emp.contract_end|date:"M d, Y" }}
               </span>
@@ -173,9 +172,9 @@
           </td>
           <td>
             <div class="action-btns">
-              <button class="btn btn-outline btn-sm btn-icon" title="View" onclick="viewEmployee({{ emp.id }})">👁</button>
-              <button class="btn btn-primary btn-sm btn-icon" title="Edit" onclick="editEmployee({{ emp.id }})">✏</button>
-              <button class="btn btn-danger btn-sm btn-icon" title="Delete" onclick="confirmDelete({{ emp.id }}, '{{ emp.first_name }} {{ emp.last_name }}')">🗑</button>
+              <button class="btn btn-outline btn-sm btn-icon" title="View" onclick="viewEmployee('{{ emp.id }}')">👁</button>
+              <button class="btn btn-primary btn-sm btn-icon" title="Edit" onclick="editEmployee('{{ emp.id }}')">✏</button>
+              <button class="btn btn-danger btn-sm btn-icon" title="Delete" onclick="confirmDelete('{{ emp.id }}', '{{ emp.first_name|escapejs }} {{ emp.last_name|escapejs }}')">🗑</button>
             </div>
           </td>
         </tr>
@@ -216,6 +215,8 @@
       <div class="tab-bar">
         <button class="tab-btn active" onclick="switchTab('tab-personal', this)">Personal Info</button>
         <button class="tab-btn" onclick="switchTab('tab-employment', this)">Employment</button>
+        <button class="tab-btn" onclick="switchTab('tab-govid', this)">Gov't IDs</button>
+        <button class="tab-btn" onclick="switchTab('tab-emergency', this)">Emergency</button>
         <button class="tab-btn" onclick="switchTab('tab-contact', this)">Account Details</button>
       </div>
 
@@ -255,8 +256,8 @@
             <div class="form-group">
               <label class="form-label">Employee Code <span style="color:var(--danger)">*</span></label>
               <input type="text" name="employee_code" id="emp-code-input" class="form-control"
-                     value="{{ next_emp_code }}"
-                     placeholder="{{ next_emp_code }}"
+                     value="{{ next_emp_code|default:'' }}"
+                     placeholder="{{ next_emp_code|default:'' }}"
                      required
                      style="font-family:monospace;font-weight:700;color:var(--blue-800);">
               <div style="font-size:.72rem;color:var(--gray-400);margin-top:.25rem;">
@@ -306,6 +307,93 @@
                 <option value="{{ sg.id }}">{{ sg.name }} — Base: ₱{{ sg.base_salary|floatformat:2 }}</option>
                 {% endfor %}
               </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="tab-govid">
+          <span class="modal-section-label">Government-Mandated IDs</span>
+          <div class="modal-form-grid">
+            <div class="form-group">
+              <label class="form-label">TIN Number</label>
+              <input type="text" name="tin_number" class="form-control" placeholder="000-000-000-000">
+            </div>
+            <div class="form-group">
+              <label class="form-label">SSS Number</label>
+              <input type="text" name="sss_number" class="form-control" placeholder="00-0000000-0">
+            </div>
+            <div class="form-group">
+              <label class="form-label">PhilHealth Number</label>
+              <input type="text" name="philhealth_number" class="form-control" placeholder="00-000000000-0">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Pag-IBIG (HDMF) Number</label>
+              <input type="text" name="pagibig_number" class="form-control" placeholder="0000-0000-0000">
+            </div>
+          </div>
+
+          <span class="modal-section-label" style="margin-top:1rem;">Personal Details</span>
+          <div class="modal-form-grid">
+            <div class="form-group">
+              <label class="form-label">Middle Name</label>
+              <input type="text" name="middle_name" class="form-control" placeholder="Optional">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Birthdate</label>
+              <input type="date" name="birthdate" class="form-control">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Gender</label>
+              <select name="gender" class="form-control">
+                <option value="">Prefer not to say</option>
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Civil Status</label>
+              <select name="civil_status" class="form-control">
+                <option value="">Not specified</option>
+                <option value="single">Single</option>
+                <option value="married">Married</option>
+                <option value="widowed">Widowed</option>
+                <option value="separated">Separated</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Nationality</label>
+              <input type="text" name="nationality" class="form-control" value="Filipino">
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-panel" id="tab-emergency">
+          <span class="modal-section-label">Emergency Contact</span>
+          <div class="modal-form-grid">
+            <div class="form-group full">
+              <label class="form-label">Contact Name</label>
+              <input type="text" name="emergency_contact_name" class="form-control" placeholder="Full name of emergency contact">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Contact Phone</label>
+              <input type="tel" name="emergency_contact_phone" class="form-control" placeholder="+63 912 345 6789">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Relationship</label>
+              <input type="text" name="emergency_contact_relationship" class="form-control" placeholder="e.g. Spouse, Parent, Sibling">
+            </div>
+          </div>
+
+          <span class="modal-section-label" style="margin-top:1rem;" id="contract-section-label">Contract Dates</span>
+          <div class="modal-form-grid" id="contract-dates">
+            <div class="form-group">
+              <label class="form-label">Contract Start</label>
+              <input type="date" name="contract_start" class="form-control">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Contract End</label>
+              <input type="date" name="contract_end" class="form-control">
             </div>
           </div>
         </div>
@@ -369,8 +457,7 @@
   <div class="modal" style="max-width:460px;">
     <div class="modal-header" style="background:var(--blue-900);">
       <h2 style="color:var(--white);">✅ Employee Created</h2>
-      <button class="btn-close" onclick="closeCredentialsModal()"
-              style="color:rgba(255,255,255,.7);">✕</button>
+      <button class="btn-close" onclick="closeCredentialsModal()" style="color:rgba(255,255,255,.7);">✕</button>
     </div>
     <div class="modal-body" style="padding:1.75rem;">
 
@@ -401,8 +488,7 @@
             <div style="font-size:.7rem;color:var(--gray-400);font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.25rem;">Temporary Password</div>
             <div style="display:flex;align-items:center;gap:.5rem;">
               <div id="cred-password" style="font-family:monospace;font-weight:800;font-size:1rem;color:var(--blue-800);letter-spacing:.08em;"></div>
-              <button onclick="togglePwdVisibility()" id="pwd-eye"
-                      style="background:none;border:none;cursor:pointer;font-size:1rem;color:var(--gray-400);">👁</button>
+              <button onclick="togglePwdVisibility()" id="pwd-eye" style="background:none;border:none;cursor:pointer;font-size:1rem;color:var(--gray-400);">👁</button>
             </div>
           </div>
         </div>
@@ -422,6 +508,11 @@
 </div>
 
 <script>
+  // Helper to extract CSRF token from DOM elements safely
+  function getCsrfToken() {
+    return document.querySelector('[name=csrfmiddlewaretoken]')?.value || '';
+  }
+
   // ── Tab switching ──────────────────────────────────────────
   function switchTab(tabId, btn) {
     document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
@@ -438,6 +529,7 @@
     const type  = document.getElementById('filter-type').value;
     let count = 0;
     document.querySelectorAll('#emp-tbody tr').forEach(row => {
+      if(row.cells.length === 1 && row.cells[0].colSpan > 1) return; // Ignore "No employees found" row
       const text   = row.textContent.toLowerCase();
       const rDept  = row.dataset.dept   || '';
       const rStat  = row.dataset.status || '';
@@ -493,8 +585,13 @@
   // ── Submit employee form ───────────────────────────────────
   function submitEmployeeForm() {
     const form = document.getElementById('employee-form');
+    if (!form.checkValidity()) {
+      form.reportValidity();
+      return;
+    }
     const data = new FormData(form);
-    const action = data.get('employee_id') ? '{% url "employees:update" pk=0 %}'.replace('/0/', `/${data.get('employee_id')}/`) : '{% url "employees:create" %}';
+    const empId = data.get('employee_id');
+    const action = empId ? '{% url "employees:update" pk=0 %}'.replace('/0/', `/${empId}/`) : '{% url "employees:create" %}';
     form.action = action;
     form.submit();
   }
@@ -502,19 +599,35 @@
   // ── Edit employee ──────────────────────────────────────────
   async function editEmployee(id) {
     try {
-      const res = await fetch(`{% url 'employees:get_json' pk=0 %}`.replace('/0/', `/${id}/`));
+      const res = await fetch(`{% url 'employees:get_json' pk=0 %}`.replace('/0/', `/${id}/ Gaza`));
       const emp = await res.json();
       document.getElementById('emp-modal-title').textContent = 'Edit Employee';
       document.getElementById('emp-form-id').value = emp.id;
       const form = document.getElementById('employee-form');
+      
+      // Clear out former fields before loading new info
+      form.reset();
+      
       for (const [key, val] of Object.entries(emp)) {
         const input = form.querySelector(`[name="${key}"]`);
         if (input) input.value = val ?? '';
       }
+      
+      // Overriding async/dynamic load constraints if editing an existing assigned department
+      if (emp.department_id) {
+        document.getElementById('dept-select').value = emp.department_id;
+        await loadPositions(emp.department_id);
+        const posSelect = document.getElementById('position-select');
+        posSelect.value = emp.position_id ?? '';
+        onPositionChange(posSelect);
+      }
+      
       const roleSelect = document.getElementById('role-id-select');
       if (roleSelect) roleSelect.value = emp.role_id ?? '';
       openModal('add-employee-modal');
-    } catch { showToast('Error loading employee data.', 'error'); }
+    } catch { 
+      if (typeof showToast === 'function') showToast('Error loading employee data.', 'error'); 
+    }
   }
 
   function viewEmployee(id) {
@@ -528,7 +641,13 @@
       const form = document.createElement('form');
       form.method = 'post';
       form.action = `{% url 'employees:delete' pk=0 %}`.replace('/0/', `/${id}/`);
-      form.innerHTML = `{% csrf_token %}`;
+      
+      const csrfInput = document.createElement('input');
+      csrfInput.type = 'hidden';
+      csrfInput.name = 'csrfmiddlewaretoken';
+      csrfInput.value = getCsrfToken();
+      form.appendChild(csrfInput);
+      
       document.body.appendChild(form);
       form.submit();
     };
@@ -543,15 +662,18 @@
 <script>
   // ── Auto-open credentials modal ────────────────────────────
   {% if request.session.new_employee_credentials %}
-  const newCreds = {{ request.session.new_employee_credentials|safe }};
+  // Safe filter output contextually evaluated
+  const newCreds = {% if request.session.new_employee_credentials %}{{ request.session.new_employee_credentials|safe }}{% else %}null{% endif %};
   document.addEventListener('DOMContentLoaded', () => {
-    showCredentials(
-      newCreds.employee_name,
-      newCreds.employee_code,
-      newCreds.username,
-      newCreds.password,
-      newCreds.role
-    );
+    if (newCreds) {
+      showCredentials(
+        newCreds.employee_name,
+        newCreds.employee_code,
+        newCreds.username,
+        newCreds.password,
+        newCreds.role
+      );
+    }
   });
   {% endif %}
 
@@ -597,9 +719,9 @@
     const role     = document.getElementById('cred-role').textContent;
     const text = `Employee: ${name}\nEmployee Code: ${code}\nUsername: ${username}\nPassword: ${_plainPassword}\nRole: ${role}`;
     navigator.clipboard.writeText(text).then(() => {
-      showToast('Credentials copied to clipboard!', 'success');
+      if (typeof showToast === 'function') showToast('Credentials copied to clipboard!', 'success');
     }).catch(() => {
-      showToast('Copy failed — please manually note the credentials.', 'error');
+      if (typeof showToast === 'function') showToast('Copy failed — please manually note the credentials.', 'error');
     });
   }
 </script>

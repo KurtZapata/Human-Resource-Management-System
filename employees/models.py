@@ -1,3 +1,4 @@
+import decimal
 from django.db import models
 from django.contrib.auth.models import User
 from accounts.models import Role
@@ -34,7 +35,6 @@ class SalaryGrade(models.Model):
     created_at    = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
-        import decimal
         # Auto-compute base_salary from hourly_rate for reference/display
         self.base_salary = (
             decimal.Decimal(str(self.hourly_rate)) * 8 * 22
@@ -48,7 +48,13 @@ class SalaryGrade(models.Model):
 class Employee(models.Model):
     EMPLOYMENT_TYPES = [('regular', 'Regular'), ('contract', 'Contract')]
     STATUS_CHOICES   = [('active', 'Active'), ('inactive', 'Inactive')]
+    GENDER_CHOICES   = [('male', 'Male'), ('female', 'Female'), ('other', 'Other')]
+    CIVIL_CHOICES    = [
+        ('single', 'Single'), ('married', 'Married'),
+        ('widowed', 'Widowed'), ('separated', 'Separated'),
+    ]
 
+    # ── Existing fields ──────────────────────────────────────────────────
     employee_code   = models.CharField(max_length=50, unique=True)
     first_name      = models.CharField(max_length=100)
     last_name       = models.CharField(max_length=100)
@@ -64,13 +70,44 @@ class Employee(models.Model):
     created_at      = models.DateTimeField(auto_now_add=True)
     updated_at      = models.DateTimeField(auto_now=True)
 
-    def __str__(self): return f'{self.last_name}, {self.first_name}'
+    # ── NEW: Personal details ──────────────────────────────────────────────
+    middle_name     = models.CharField(max_length=100, blank=True)
+    birthdate       = models.DateField(null=True, blank=True)
+    gender          = models.CharField(max_length=10, choices=GENDER_CHOICES, blank=True)
+    civil_status    = models.CharField(max_length=15, choices=CIVIL_CHOICES, blank=True)
+    nationality     = models.CharField(max_length=60, blank=True, default='Filipino')
+
+    # ── NEW: Government IDs ────────────────────────────────────────────────
+    tin_number        = models.CharField(max_length=30, blank=True)
+    sss_number        = models.CharField(max_length=30, blank=True)
+    philhealth_number = models.CharField(max_length=30, blank=True)
+    pagibig_number    = models.CharField(max_length=30, blank=True)
+
+    # ── NEW: Emergency contact ─────────────────────────────────────────────
+    emergency_contact_name         = models.CharField(max_length=150, blank=True)
+    emergency_contact_phone        = models.CharField(max_length=30, blank=True)
+    emergency_contact_relationship = models.CharField(max_length=60, blank=True)
+
+    # ── NEW: Contract dates (for contractual employees) ────────────────────
+    contract_start  = models.DateField(null=True, blank=True)
+    contract_end    = models.DateField(null=True, blank=True)
+
+    def __str__(self): 
+        return f'{self.last_name}, {self.first_name}'
+
     @property
-    def full_name(self): return f'{self.first_name} {self.last_name}'
+    def full_name(self): 
+        return f'{self.first_name} {self.last_name}'
+
+    @property
+    def is_contract_expired(self):
+        if self.employment_type == 'contract' and self.contract_end:
+            from datetime import date
+            return date.today() > self.contract_end
+        return False
 
 
 class SystemUser(models.Model):
-    # ── 5: User (System Accounts) ──
     username      = models.CharField(max_length=150, unique=True)
     password_hash = models.CharField(max_length=255)
     employee      = models.OneToOneField(Employee, on_delete=models.SET_NULL, null=True, blank=True)
@@ -83,7 +120,6 @@ class SystemUser(models.Model):
 
 
 class LeaveBalance(models.Model):
-    # ── 20: LeaveBalance ──
     from accounts.models import LeaveType
     employee       = models.ForeignKey(Employee, on_delete=models.CASCADE)
     leave_type     = models.ForeignKey(LeaveType, on_delete=models.CASCADE)
@@ -91,7 +127,6 @@ class LeaveBalance(models.Model):
 
 
 class CompanySettings(models.Model):
-    # NOTE: Extra table beyond ERD — stores branding/config
     company_name    = models.CharField(max_length=200, default='Your Company')
     company_initials= models.CharField(max_length=5, default='HR')
     company_logo    = models.ImageField(upload_to='company/', blank=True, null=True)

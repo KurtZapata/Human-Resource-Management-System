@@ -6,7 +6,7 @@
 {% block breadcrumb %}HR Management › Departments{% endblock %}
 
 {% block header_actions %}
-  <button class="btn btn-gold btn-sm" onclick="openModal('add-dept-modal')">+ Add Department</button>
+  <button class="btn btn-gold btn-sm" onclick="openModal('add-dept-modal'); resetDeptForm();">+ Add Department</button>
 {% endblock %}
 
 {% block extra_css %}
@@ -50,18 +50,11 @@
   }
   .dept-positions.open { display: block; }
   .dept-positions h5 { font-size: .72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--gray-400); margin-bottom: .5rem; }
-  .pos-chip {
-    display: inline-flex; align-items: center; gap: .35rem;
-    background: var(--white); border: 1px solid var(--gray-200);
-    border-radius: 20px; padding: .18rem .6rem; font-size: .75rem; font-weight: 600;
-    color: var(--gray-700); margin: .15rem;
-  }
 </style>
 {% endblock %}
 
 {% block content %}
 
-<!-- Stats -->
 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.5rem;">
   <div class="stat-card">
     <div class="stat-icon blue">🏢</div>
@@ -83,7 +76,6 @@
   </div>
 </div>
 
-<!-- Department Cards -->
 <div class="dept-grid">
   {% for dept in departments %}
   <div class="dept-card">
@@ -106,18 +98,45 @@
       </div>
     </div>
 
-    <!-- Positions toggle -->
-    {% if dept.positions %}
+    {% if dept.positions_detail %}
     <div class="dept-positions" id="positions-{{ dept.id }}">
       <h5>Positions in this Department</h5>
-      {% for pos in dept.positions %}
-        <span class="pos-chip">📌 {{ pos.name }}</span>
+      {% for pos in dept.positions_detail %}
+      <div style="display:flex;align-items:center;justify-content:space-between;
+                  background:var(--white);border:1px solid var(--gray-200);
+                  border-radius:var(--radius-sm);padding:.45rem .75rem;margin:.15rem 0;">
+        <div>
+          <span style="font-size:.82rem;font-weight:700;color:var(--gray-800);">
+            📌 {{ pos.name }}
+          </span>
+          {% if pos.base_salary %}
+          <span style="font-size:.72rem;color:var(--gray-400);margin-left:.4rem;">
+            — ref ₱{{ pos.base_salary|floatformat:"2g" }}
+          </span>
+          {% endif %}
+          <span class="badge badge-blue" style="font-size:.65rem;margin-left:.4rem;">
+            {{ pos.emp_count }} emp
+          </span>
+        </div>
+        <div style="display:flex;gap:.3rem;">
+          <button class="btn btn-outline btn-sm"
+                  style="padding:.2rem .5rem;font-size:.72rem;"
+                  onclick="editPosition({{ pos.id }}, {{ dept.id }}, '{{ pos.name|escapejs }}', '{{ pos.base_salary }}')">
+            ✏
+          </button>
+          <button class="btn btn-danger btn-sm"
+                  style="padding:.2rem .5rem;font-size:.72rem;"
+                  onclick="deletePosition({{ pos.id }}, '{{ pos.name|escapejs }}', {{ pos.emp_count }})">
+            🗑
+          </button>
+        </div>
+      </div>
       {% endfor %}
     </div>
     {% endif %}
 
     <div class="dept-actions">
-      {% if dept.positions %}
+      {% if dept.positions_detail %}
       <button class="btn btn-outline btn-sm" style="flex:0;"
               onclick="togglePositions({{ dept.id }})">📋 Positions</button>
       {% endif %}
@@ -126,7 +145,7 @@
         ✏ Edit
       </button>
       <button class="btn btn-outline btn-sm" style="flex:1;"
-              onclick="openModal('add-position-modal'); document.getElementById('pos-dept-id').value={{ dept.id }}; document.getElementById('pos-dept-name').textContent='{{ dept.name|escapejs }}'">
+              onclick="resetPositionForm(); openModal('add-position-modal'); document.getElementById('pos-dept-id').value={{ dept.id }}; document.getElementById('pos-dept-name').textContent='{{ dept.name|escapejs }}'">
         + Position
       </button>
       <button class="btn btn-danger btn-sm btn-icon"
@@ -141,7 +160,6 @@
   {% endfor %}
 </div>
 
-<!-- Department + Positions table -->
 {% if departments %}
 <div class="card">
   <div class="card-header"><h3>Department Directory</h3></div>
@@ -183,7 +201,6 @@
 </div>
 {% endif %}
 
-<!-- ══ ADD / EDIT DEPARTMENT MODAL ══ -->
 <div class="modal-backdrop" id="add-dept-modal">
   <div class="modal" style="max-width:460px;">
     <div class="modal-header">
@@ -214,26 +231,27 @@
   </div>
 </div>
 
-<!-- ══ ADD POSITION MODAL ══ -->
 <div class="modal-backdrop" id="add-position-modal">
   <div class="modal" style="max-width:440px;">
     <div class="modal-header">
-      <h2>Add Position to <span id="pos-dept-name"></span></h2>
+      <h2 id="pos-form-title">Add Position to <span id="pos-dept-name"></span></h2>
       <button class="btn-close" onclick="closeModal('add-position-modal')">✕</button>
     </div>
     <div class="modal-body">
       <form id="position-form" method="post" action="{% url 'employees:departments' %}">
         {% csrf_token %}
-        <input type="hidden" name="action" value="create_position">
+        <input type="hidden" name="action" id="pos-form-action" value="create_position">
+        <input type="hidden" id="pos-id-hidden" name="pos_id">
         <input type="hidden" name="dept_id" id="pos-dept-id">
+        
         <div class="form-group" style="margin-bottom:.9rem;">
           <label class="form-label">Position Name <span style="color:var(--danger)">*</span></label>
-          <input type="text" name="pos_name" class="form-control"
+          <input type="text" name="pos_name" id="pos-name-field" class="form-control"
                  placeholder="e.g. HR Manager, Senior Developer" required>
         </div>
         <div class="form-group">
           <label class="form-label">Base Salary Override (₱)</label>
-          <input type="number" name="base_salary" class="form-control"
+          <input type="number" name="base_salary" id="pos-salary-field" class="form-control"
                  step="0.01" min="0" placeholder="Leave blank to use salary grade">
           <div style="font-size:.75rem;color:var(--gray-400);margin-top:.3rem;">
             Optional. If set, overrides the salary grade base salary for this position.
@@ -243,12 +261,11 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('add-position-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="document.getElementById('position-form').submit()">💾 Add Position</button>
+      <button class="btn btn-primary" onclick="document.getElementById('position-form').submit()">💾 Save Position</button>
     </div>
   </div>
 </div>
 
-<!-- Delete Confirm Modal -->
 <div class="modal-backdrop" id="delete-dept-modal">
   <div class="modal" style="max-width:380px;">
     <div class="modal-header"><h2>Delete Department</h2><button class="btn-close" onclick="closeModal('delete-dept-modal')">✕</button></div>
@@ -268,6 +285,23 @@
   function togglePositions(id) {
     document.getElementById('positions-' + id).classList.toggle('open');
   }
+  
+  function resetDeptForm() {
+    document.getElementById('dept-modal-title').textContent = 'Add Department';
+    document.getElementById('dept-action').value = 'create';
+    document.getElementById('dept-id-input').value = '';
+    document.getElementById('dept-name-input').value = '';
+    document.getElementById('dept-desc-input').value = '';
+  }
+
+  function resetPositionForm() {
+    document.getElementById('pos-id-hidden').value = '';
+    document.getElementById('pos-name-field').value = '';
+    document.getElementById('pos-salary-field').value = '';
+    document.getElementById('pos-form-title').innerHTML = 'Add Position to <span id="pos-dept-name"></span>';
+    document.getElementById('pos-form-action').value = 'create_position';
+  }
+
   function editDept(id, name, desc) {
     document.getElementById('dept-modal-title').textContent = 'Edit Department';
     document.getElementById('dept-action').value    = 'update';
@@ -276,6 +310,7 @@
     document.getElementById('dept-desc-input').value = desc;
     openModal('add-dept-modal');
   }
+
   function deleteDept(id, name, empCount) {
     document.getElementById('del-dept-name').textContent = name;
     document.getElementById('del-dept-warning').textContent =
@@ -287,6 +322,34 @@
       document.body.appendChild(f); f.submit();
     };
     openModal('delete-dept-modal');
+  }
+
+  // ── Integrated Position CRUD JavaScript Actions ──
+  function editPosition(posId, deptId, name, salary) {
+    document.getElementById('pos-id-hidden').value = posId;
+    document.getElementById('pos-dept-id').value   = deptId;
+    document.getElementById('pos-name-field').value = name;
+    // Safely assign empty fields if reference metrics are absent
+    if (salary && salary !== 'None' && salary !== '0') {
+      document.getElementById('pos-salary-field').value = salary;
+    } else {
+      document.getElementById('pos-salary-field').value = '';
+    }
+    document.getElementById('pos-form-title').textContent = 'Edit Position';
+    document.getElementById('pos-form-action').value = 'update_position';
+    openModal('add-position-modal');
+  }
+
+  function deletePosition(posId, name, empCount) {
+    if (!confirm(
+      empCount > 0
+        ? `Delete position "${name}"? ${empCount} employee(s) will be unassigned.`
+        : `Delete position "${name}"?`
+    )) return;
+    const f = document.createElement('form');
+    f.method = 'post'; f.action = "{% url 'employees:departments' %}";
+    f.innerHTML = `{% csrf_token %}<input name="action" value="delete_position"><input name="pos_id" value="${posId}">`;
+    document.body.appendChild(f); f.submit();
   }
 </script>
 {% endblock %}

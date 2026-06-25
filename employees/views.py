@@ -76,6 +76,24 @@ def employee_update(request, pk):
     if pos_id:   emp.position_id     = pos_id
     if grade_id: emp.salary_grade_id = grade_id
 
+    # ── NEW fields updates ────────────────────────────────────────────────────
+    for field in [
+        'middle_name', 'gender', 'civil_status', 'nationality',
+        'tin_number', 'sss_number', 'philhealth_number', 'pagibig_number',
+        'emergency_contact_name', 'emergency_contact_phone',
+        'emergency_contact_relationship',
+    ]:
+        val = d.get(field, '').strip()
+        if val != '':
+            setattr(emp, field, val)
+
+    for date_field in ['birthdate', 'contract_start', 'contract_end']:
+        val = d.get(date_field, '').strip()
+        if val:
+            setattr(emp, date_field, val)
+        elif val == '':
+            pass  # Unchanged
+
     emp.updated_at = timezone.now()
     emp.save()
 
@@ -213,7 +231,7 @@ def employee_list(request):
 
 @admin_required
 def employee_detail(request, pk):
-    """View-only employee profile with tabs for attendance, payroll, leave."""
+    """Full employee profile with all related data."""
     emp = get_object_or_404(Employee, pk=pk)
 
     from attendance.models import Attendance
@@ -226,16 +244,20 @@ def employee_detail(request, pk):
         employee=emp
     ).select_related('payroll_period').order_by('-payroll_period__start_date')
 
+    from .models import LeaveBalance
     leave_balances = LeaveBalance.objects.filter(
         employee=emp
     ).select_related('leave_type')
+
+    from accounts.models import Role
+    roles = Role.objects.all()
 
     return render(request, 'hrms/employee_detail.html', {
         'employee':          emp,
         'recent_attendance': recent_attendance,
         'payroll_history':   payroll_history,
         'leave_balances':    leave_balances,
-        'roles':             Role.objects.all(),
+        'roles':             roles,
         **_branding(),
     })
 
@@ -275,6 +297,21 @@ def employee_create(request):
             department_id   = d.get('department_id') or None,
             position_id     = d.get('position_id') or None,
             salary_grade_id = d.get('salary_grade_id') or None,
+            # ── NEW fields ──────────────────────────────────
+            middle_name     = d.get('middle_name', '').strip(),
+            birthdate       = d.get('birthdate') or None,
+            gender          = d.get('gender', '').strip(),
+            civil_status    = d.get('civil_status', '').strip(),
+            nationality     = d.get('nationality', 'Filipino').strip(),
+            tin_number      = d.get('tin_number', '').strip(),
+            sss_number      = d.get('sss_number', '').strip(),
+            philhealth_number = d.get('philhealth_number', '').strip(),
+            pagibig_number  = d.get('pagibig_number', '').strip(),
+            emergency_contact_name         = d.get('emergency_contact_name', '').strip(),
+            emergency_contact_phone        = d.get('emergency_contact_phone', '').strip(),
+            emergency_contact_relationship = d.get('emergency_contact_relationship', '').strip(),
+            contract_start  = d.get('contract_start') or None,
+            contract_end    = d.get('contract_end') or None,
         )
         emp.save()
     except Exception as e:
@@ -382,14 +419,24 @@ def employee_get_json(request, pk):
     return JsonResponse(_emp_to_dict(emp))
 
 
-@admin_required
+@login_required
 @require_GET
 def positions_by_department(request):
-    """AJAX: Returns positions filtered by dept_id for dynamic dropdown."""
+    """
+    AJAX: Returns positions filtered by dept_id.
+    Now includes base_salary and employee count so the modal
+    can display salary info when a position is selected.
+    """
     dept_id   = request.GET.get('dept_id')
+    if not dept_id:
+        return JsonResponse({'positions': []})
+
     positions = Position.objects.filter(
         department_id=dept_id
-    ).values('id', 'name')
+    ).annotate(
+        emp_count=Count('employee')
+    ).values('id', 'name', 'base_salary', 'emp_count')
+
     return JsonResponse({'positions': list(positions)})
 
 
@@ -417,17 +464,23 @@ def export_employees(request):
     return response
 
 
-# ── Department CRUD ───────────────────────────────────────────────────────────
-@admin_required
+# ── Department & Position CRUD ────────────────────────────────────────────────
+
+@login_required
 def departments_view(request):
-    """Department list + full CRUD via POST action field."""
+    """
+    Full CRUD for Departments and their Positions.
+    POST actions: create, update, delete (dept)
+                  create_position, update_position, delete_position
+    """
     if request.method == 'POST':
         action = request.POST.get('action', 'create')
 
+        # ── Department CRUD ───────────────────────────────────────────────
         if action == 'create':
             Department.objects.create(
-                name        = request.POST.get('name', '').strip(),
-                description = request.POST.get('description', '').strip(),
+                name=request.POST.get('name', '').strip(),
+                description=request.POST.get('description', '').strip(),
             )
             messages.success(request, 'Department created.')
 
@@ -440,27 +493,58 @@ def departments_view(request):
 
         elif action == 'delete':
             dept = get_object_or_404(Department, pk=request.POST.get('dept_id'))
+            # Detach employees before deleting
             Employee.objects.filter(department=dept).update(department=None)
             dept.delete()
-            messages.warning(request, 'Department deleted.')
+            messages.warning(request, 'Department deleted. Affected employees have no department.')
 
+        # ── Position CRUD ─────────────────────────────────────────────────
         elif action == 'create_position':
-            Position.objects.create(
-                name          = request.POST.get('pos_name', '').strip(),
-                department_id = request.POST.get('dept_id'),
-                base_salary   = request.POST.get('base_salary') or 0,
-            )
-            messages.success(request, 'Position added.')
+            dept_id = request.POST.get('dept_id')
+            name    = request.POST.get('pos_name', '').strip()
+            base    = request.POST.get('base_salary', 0) or 0
+            if dept_id and name:
+                Position.objects.create(
+                    name=name,
+                    department_id=dept_id,
+                    base_salary=base,
+                )
+                messages.success(request, f'Position "{name}" added.')
+            else:
+                messages.error(request, 'Department and position name are required.')
+
+        elif action == 'update_position':
+            pos  = get_object_or_404(Position, pk=request.POST.get('pos_id'))
+            pos.name        = request.POST.get('pos_name', pos.name).strip()
+            pos.base_salary = request.POST.get('base_salary', pos.base_salary) or 0
+            # Allow moving position to a different department
+            new_dept = request.POST.get('dept_id')
+            if new_dept:
+                pos.department_id = new_dept
+            pos.save()
+            messages.success(request, f'Position "{pos.name}" updated.')
+
+        elif action == 'delete_position':
+            pos  = get_object_or_404(Position, pk=request.POST.get('pos_id'))
+            name = pos.name
+            # Detach employees before deleting
+            Employee.objects.filter(position=pos).update(position=None)
+            pos.delete()
+            messages.warning(request, f'Position "{name}" deleted.')
 
         return redirect('employees:departments')
 
+    # ── GET: annotate each department with counts and positions ───────────
     departments = Department.objects.annotate(
         emp_count      = Count('employee', distinct=True),
         position_count = Count('position', distinct=True),
     ).prefetch_related('position_set').order_by('name')
 
     for dept in departments:
-        dept.positions = dept.position_set.all()
+        # Attach positions with their employee counts
+        dept.positions_detail = dept.position_set.annotate(
+            emp_count=Count('employee')
+        ).order_by('name')
 
     return render(request, 'hrms/departments.html', {
         'departments': departments,
@@ -501,7 +585,6 @@ def create_grade(request):
         name          = request.POST.get('name', '').strip(),
         hourly_rate   = request.POST.get('hourly_rate', 0),
         overtime_rate = request.POST.get('overtime_rate', 0),
-        # base_salary auto-computed in model.save()
     )
     messages.success(request, 'Salary grade created.')
     return redirect('payroll:components')
@@ -786,6 +869,7 @@ def _emp_to_dict(emp):
         'employee_code':    emp.employee_code,
         'first_name':       emp.first_name,
         'last_name':        emp.last_name,
+        'middle_name':      getattr(emp, 'middle_name', ''),
         'email':            emp.email,
         'phone':            emp.phone,
         'address':          emp.address,
@@ -796,6 +880,19 @@ def _emp_to_dict(emp):
         'position_id':      emp.position_id,
         'salary_grade_id':  emp.salary_grade_id,
         'role_id':          role_id,
+        'birthdate':        str(emp.birthdate) if getattr(emp, 'birthdate', None) else '',
+        'gender':           getattr(emp, 'gender', ''),
+        'civil_status':     getattr(emp, 'civil_status', ''),
+        'nationality':      getattr(emp, 'nationality', ''),
+        'tin_number':       getattr(emp, 'tin_number', ''),
+        'sss_number':       getattr(emp, 'sss_number', ''),
+        'philhealth_number': getattr(emp, 'philhealth_number', ''),
+        'pagibig_number':    getattr(emp, 'pagibig_number', ''),
+        'emergency_contact_name': getattr(emp, 'emergency_contact_name', ''),
+        'emergency_contact_phone': getattr(emp, 'emergency_contact_phone', ''),
+        'emergency_contact_relationship': getattr(emp, 'emergency_contact_relationship', ''),
+        'contract_start':   str(emp.contract_start) if getattr(emp, 'contract_start', None) else '',
+        'contract_end':     str(emp.contract_end)   if getattr(emp, 'contract_end',   None) else '',
     }
 
 
