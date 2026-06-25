@@ -45,8 +45,8 @@
     font-size: 1.55rem; font-weight: 800;
     border: 4px solid var(--white); box-shadow: var(--shadow-md);
   }
-  .profile-avatar.active  { background: var(--blue-800); }
-  .profile-avatar.inactive{ background: var(--gray-400); }
+  .profile-avatar.active   { background: var(--blue-800); }
+  .profile-avatar.inactive { background: var(--gray-400); }
 
   .profile-name { font-size: 1.1rem; font-weight: 800; color: var(--gray-900); margin-top: .65rem; text-align: center; }
   .profile-code { font-size: .78rem; color: var(--gray-400); text-align: center; margin-top: .15rem; }
@@ -97,7 +97,6 @@
 {% block content %}
 <div class="profile-layout">
 
-  <!-- ── Left: Profile Card ── -->
   <div class="profile-card">
     <div class="profile-banner"></div>
     <div class="profile-avatar-wrap">
@@ -144,7 +143,6 @@
     </div>
   </div>
 
-  <!-- ── Right: Tab Panels ── -->
   <div>
     <div class="detail-tabs">
       <button class="dtab active" onclick="switchDTab('tab-personal', this)">📋 Personal Info</button>
@@ -153,169 +151,153 @@
       <button class="dtab" onclick="switchDTab('tab-leave', this)">🏖 Leave Balance</button>
     </div>
 
-    <!-- TAB 1: Personal Info -->
-<div class="dtab-panel active" id="tab-personal">
-  <div class="card">
-    <div class="card-header"><h3>Personal Information</h3></div>
-    <div class="card-body">
-      <div class="info-grid">
-        <div class="info-field">
-          <label>First Name</label>
-          <span>{{ employee.first_name }}</span>
-        </div>
-        <div class="info-field">
-          <label>Last Name</label>
-          <span>{{ employee.last_name }}</span>
-        </div>
-        <div class="info-field">
-          <label>Email Address</label>
-          <span>{{ employee.email }}</span>
-        </div>
-        <div class="info-field">
-          <label>Phone Number</label>
-          <span {% if not employee.phone %}class="empty"{% endif %}>{{ employee.phone|default:"Not provided" }}</span>
-        </div>
-        <div class="info-field" style="grid-column:1/-1;">
-          <label>Address</label>
-          <span {% if not employee.address %}class="empty"{% endif %}>{{ employee.address|default:"Not provided" }}</span>
-        </div>
-      </div>
-
-      <hr class="divider" style="margin:1.25rem 0;">
-
-      <div class="info-grid">
-        <div class="info-field">
-          <label>Employee Code</label>
-          <span><code style="background:var(--gray-100);padding:.2rem .5rem;border-radius:4px;font-size:.88rem;">{{ employee.employee_code }}</code></span>
-        </div>
-        <div class="info-field">
-          <label>Date Hired</label>
-          <span>{{ employee.date_hired|date:"F d, Y"|default:"—" }}</span>
-        </div>
-        <div class="info-field">
-          <label>Employment Type</label>
-          <span>{{ employee.employment_type|title }}</span>
-        </div>
-        <div class="info-field">
-          <label>Status</label>
-          <span>
-            <span class="badge {% if employee.status == 'active' %}badge-success{% else %}badge-danger{% endif %}">
-              {{ employee.status|title }}
-            </span>
-          </span>
-        </div>
-        <div class="info-field">
-          <label>Department</label>
-          <span>{{ employee.department.name|default:"—" }}</span>
-        </div>
-        <div class="info-field">
-          <label>Position</label>
-          <span>{{ employee.position.name|default:"—" }}</span>
-        </div>
-        <div class="info-field">
-          <label>Salary Grade</label>
-          <span>{{ employee.salary_grade.name|default:"—" }}</span>
-        </div>
-        <div class="info-field">
-          <label>Base Salary</label>
-          <span>₱{{ employee.salary_grade.base_salary|floatformat:"2"|default:"—" }}</span>
-        </div>
-      </div>
-
-      <hr class="divider" style="margin:1.5rem 0;">
-
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
-        <div>
-          <div style="font-size:.95rem;font-weight:800;color:var(--gray-800);">System Account &amp; Role</div>
-          <div style="font-size:.8rem;color:var(--gray-400);margin-top:.15rem;">
-            Controls admin access level for this employee
-          </div>
-        </div>
-      </div>
-
-      {% if employee.systemuser %}
-      <form method="post" action="{% url 'employees:update_employee_role' pk=employee.id %}"
-            style="background:var(--gray-50);border:1px solid var(--gray-200);
-                   border-radius:var(--radius-lg);padding:1.25rem;">
-        {% csrf_token %}
-
-        <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1.1rem;">
-          <div style="width:38px;height:38px;border-radius:50%;background:var(--blue-800);
-                      color:var(--white);display:flex;align-items:center;justify-content:center;
-                      font-weight:700;font-size:.85rem;flex-shrink:0;">
-            {{ employee.systemuser.username|slice:':2'|upper }}
-          </div>
-          <div>
-            <div style="font-weight:700;font-size:.9rem;color:var(--gray-800);">
-              @{{ employee.systemuser.username }}
+    <div class="dtab-panel active" id="tab-personal">
+      <div class="card">
+        <div class="card-header"><h3>Personal Information</h3></div>
+        <div class="card-body">
+          <div class="info-grid">
+            <div class="info-field">
+              <label>First Name</label>
+              <span>{{ employee.first_name }}</span>
             </div>
-            <div style="font-size:.75rem;color:var(--gray-400);">
-              {% if employee.systemuser.is_active %}
-                <span style="color:var(--success);">● Active</span>
-              {% else %}
-                <span style="color:var(--danger);">● Inactive</span>
-              {% endif %}
-              · Last login: {{ employee.systemuser.last_login|date:"M d, Y H:i"|default:"Never" }}
+            <div class="info-field">
+              <label>Last Name</label>
+              <span>{{ employee.last_name }}</span>
+            </div>
+            <div class="info-field">
+              <label>Email Address</label>
+              <span>{{ employee.email }}</span>
+            </div>
+            <div class="info-field">
+              <label>Phone Number</label>
+              <span {% if not employee.phone %}class="empty"{% endif %}>{{ employee.phone|default:"Not provided" }}</span>
+            </div>
+            <div class="info-field" style="grid-column:1/-1;">
+              <label>Address</label>
+              <span {% if not employee.address %}class="empty"{% endif %}>{{ employee.address|default:"Not provided" }}</span>
             </div>
           </div>
-        </div>
 
-        <div class="form-group" style="margin-bottom:1rem;">
-          <label class="form-label">Admin Role</label>
-          <select name="role_id" class="form-control" id="emp-role-select"
-                  onchange="highlightRoleChange(this)">
-            <option value="">🚫 No Admin Access (Employee only)</option>
-            {% for role in roles %}
-            <option value="{{ role.id }}"
-                    {% if employee.systemuser.role_id == role.id %}selected{% endif %}>
-              {% if role.name == 'SuperAdmin' %}👑{% elif role.name == 'HRAdmin' %}🛡{% else %}👤{% endif %}
-              {{ role.name }}
-              —
-              {% if role.name == 'SuperAdmin' %}Full system access
-              {% elif role.name == 'HRAdmin'  %}HR & Payroll access
-              {% elif role.name == 'StaffAdmin' %}View-only access
-              {% else %}{{ role.description|default:"Custom" }}{% endif %}
-            </option>
-            {% endfor %}
-          </select>
-        </div>
+          <hr class="divider" style="margin:1.25rem 0;">
 
-        <div style="display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;">
-          <button type="submit" class="btn btn-primary btn-sm" id="save-role-btn">
-            💾 Save Role
-          </button>
-          <div style="font-size:.75rem;color:var(--gray-400);" id="role-change-hint" style="display:none;">
-            ⚠ Unsaved change — click Save Role to apply.
+          <div class="info-grid">
+            <div class="info-field">
+              <label>Employee Code</label>
+              <span><code style="background:var(--gray-100);padding:.2rem .5rem;border-radius:4px;font-size:.88rem;">{{ employee.employee_code }}</code></span>
+            </div>
+            <div class="info-field">
+              <label>Date Hired</label>
+              <span>{{ employee.date_hired|date:"F d, Y"|default:"—" }}</span>
+            </div>
+            <div class="info-field">
+              <label>Employment Type</label>
+              <span>{{ employee.employment_type|title }}</span>
+            </div>
+            <div class="info-field">
+              <label>Status</label>
+              <span>
+                <span class="badge {% if employee.status == 'active' %}badge-success{% else %}badge-danger{% endif %}">
+                  {{ employee.status|title }}
+                </span>
+              </span>
+            </div>
+            <div class="info-field">
+              <label>Department</label>
+              <span>{{ employee.department.name|default:"—" }}</span>
+            </div>
+            <div class="info-field">
+              <label>Position</label>
+              <span>{{ employee.position.name|default:"—" }}</span>
+            </div>
+            <div class="info-field">
+              <label>Salary Grade</label>
+              <span>{{ employee.salary_grade.name|default:"—" }}</span>
+            </div>
+            <div class="info-field">
+              <label>Base Salary</label>
+              <span>₱{{ employee.salary_grade.base_salary|floatformat:"2"|default:"—" }}</span>
+            </div>
           </div>
-        </div>
 
-      </form>
+          <hr class="divider" style="margin:1.5rem 0;">
 
-      {% else %}
-      <div style="background:var(--gray-50);border:1px solid var(--gray-200);
-                  border-radius:var(--radius-lg);padding:1.25rem;text-align:center;">
-        <div style="font-size:.9rem;color:var(--gray-500);margin-bottom:.85rem;">
-          This employee has no system account yet.
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+            <div>
+              <div style="font-size:.95rem;font-weight:800;color:var(--gray-800);">System Account &amp; Role</div>
+              <div style="font-size:.8rem;color:var(--gray-400);margin-top:.15rem;">
+                Controls admin access level for this employee
+              </div>
+            </div>
+          </div>
+
+          {% if employee.systemuser %}
+          <form method="post" action="{% url 'employees:update_employee_role' pk=employee.id %}"
+                style="background:var(--gray-50);border:1px solid var(--gray-200); border-radius:var(--radius-lg);padding:1.25rem;">
+            {% csrf_token %}
+
+            <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:1.1rem;">
+              <div style="width:38px;height:38px;border-radius:50%;background:var(--blue-800); color:var(--white);display:flex;align-items:center;justify-content:center; font-weight:700;font-size:.85rem;flex-shrink:0;">
+                {{ employee.systemuser.username|slice:':2'|upper }}
+              </div>
+              <div>
+                <div style="font-weight:700;font-size:.9rem;color:var(--gray-800);">
+                  @{{ employee.systemuser.username }}
+                </div>
+                <div style="font-size:.75rem;color:var(--gray-400);">
+                  {% if employee.systemuser.is_active %}
+                    <span style="color:var(--success);">● Active</span>
+                  {% else %}
+                    <span style="color:var(--danger);">● Inactive</span>
+                  {% endif %}
+                  · Last login: {{ employee.systemuser.last_login|date:"M d, Y H:i"|default:"Never" }}
+                </div>
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom:1rem;">
+              <label class="form-label">Admin Role</label>
+              <select name="role_id" class="form-control" id="emp-role-select" onchange="highlightRoleChange(this)">
+                <option value="">🚫 No Admin Access (Employee only)</option>
+                {% for role in roles %}
+                <option value="{{ role.id }}" {% if employee.systemuser.role_id == role.id %}selected{% endif %}>
+                  {% if role.name == 'SuperAdmin' %}👑{% elif role.name == 'HRAdmin' %}🛡{% else %}👤{% endif %}
+                  {{ role.name }} — {% if role.name == 'SuperAdmin' %}Full system access{% elif role.name == 'HRAdmin' %}HR & Payroll access{% elif role.name == 'StaffAdmin' %}View-only access{% else %}{{ role.description|default:"Custom" }}{% endif %}
+                </option>
+                {% endfor %}
+              </select>
+            </div>
+
+            <div style="display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;">
+              <button type="submit" class="btn btn-primary btn-sm" id="save-role-btn">
+                💾 Save Role
+              </button>
+              <div style="font-size:.75rem;color:var(--gray-400);display:none;" id="role-change-hint">
+                ⚠ Unsaved change — click Save Role to apply.
+              </div>
+            </div>
+          </form>
+          {% else %}
+          <div style="background:var(--gray-50);border:1px solid var(--gray-200); border-radius:var(--radius-lg);padding:1.25rem;text-align:center;">
+            <div style="font-size:.9rem;color:var(--gray-500);margin-bottom:.85rem;">
+              This employee has no system account yet.
+            </div>
+            <a href="{% url 'employees:users' %}" class="btn btn-primary btn-sm">
+              + Create System Account
+            </a>
+          </div>
+          {% endif %}
+
+          <script>
+            function highlightRoleChange(sel) {
+              document.getElementById('role-change-hint').style.display = 'inline';
+              document.getElementById('save-role-btn').style.background = 'var(--gold-500)';
+              document.getElementById('save-role-btn').style.color      = 'var(--gray-900)';
+            }
+          </script>
         </div>
-        <a href="{% url 'employees:users' %}" class="btn btn-primary btn-sm">
-          + Create System Account
-        </a>
       </div>
-      {% endif %}
-
-      <script>
-        function highlightRoleChange(sel) {
-          document.getElementById('role-change-hint').style.display = 'inline';
-          document.getElementById('save-role-btn').style.background = 'var(--gold-500)';
-          document.getElementById('save-role-btn').style.color      = 'var(--gray-900)';
-        }
-      </script>
-
     </div>
-  </div>
-</div>
 
-    <!-- TAB 2: Attendance -->
     <div class="dtab-panel" id="tab-attendance">
       <div class="card">
         <div class="card-header">
@@ -361,7 +343,6 @@
       </div>
     </div>
 
-    <!-- TAB 3: Payroll History -->
     <div class="dtab-panel" id="tab-payroll">
       <div class="card">
         <div class="card-header">
@@ -373,10 +354,10 @@
             <thead>
               <tr>
                 <th>Period</th>
-                <th class="num" style="text-align:right;">Basic Pay</th>
-                <th class="num" style="text-align:right;">Gross Pay</th>
-                <th class="num" style="text-align:right;">Deductions</th>
-                <th class="num" style="text-align:right;">Net Pay</th>
+                <th style="text-align:right;">Basic Pay</th>
+                <th style="text-align:right;">Gross Pay</th>
+                <th style="text-align:right;">Deductions</th>
+                <th style="text-align:right;">Net Pay</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -403,7 +384,6 @@
       </div>
     </div>
 
-    <!-- TAB 4: Leave Balance -->
     <div class="dtab-panel" id="tab-leave">
       <div class="card">
         <div class="card-header"><h3>Leave Balances</h3></div>
@@ -425,8 +405,8 @@
       </div>
     </div>
 
-  </div><!-- /right col -->
-</div><!-- /profile-layout -->
+  </div>
+</div>
 
 <script>
   function switchDTab(id, btn) {

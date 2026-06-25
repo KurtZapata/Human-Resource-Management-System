@@ -991,12 +991,23 @@ def otp_stats_json(request):
 
 def _recompute_payroll_for_attendance(att):
     """
-    After an attendance record is edited, recalculate payroll for the
-    affected employee if their payroll for this period is still in draft.
-    Does nothing if payroll is confirmed (locked).
+    After an attendance record is edited or OT is granted, recalculate
+    payroll for the affected employee — IF their payroll for this period
+    is still in draft (not confirmed).
+
+    This now mirrors run_payroll() exactly, including:
+      - hourly_rate × hours_worked basic pay
+      - modular components (SSS, PhilHealth, etc.)
+      - overtime adjustments (hours × ot_rate, recomputed live)
+      - leave adjustments (manual ₱ amount)
+      - Calendar holiday / rest day rate_multiplier   ← THE FIX
     """
     try:
-        from payroll.models import PayrollPeriod, Payroll, PayrollBreakdown, PayrollComponent, EmployeePayrollComponent, Adjustment
+        from payroll.models import (
+            PayrollPeriod, Payroll, PayrollBreakdown,
+            PayrollComponent, EmployeePayrollComponent, Adjustment,
+        )
+        from calendar_app.models import Calendar
         from decimal import Decimal, ROUND_HALF_UP
         from django.db.models import Sum
 
@@ -1016,14 +1027,12 @@ def _recompute_payroll_for_attendance(att):
 
         emp = att.employee
         sg  = emp.salary_grade
-
         if not sg:
             return
 
         hourly_rate = Decimal(str(sg.hourly_rate))
         ot_rate     = Decimal(str(sg.overtime_rate))
 
-        # Sum hours_worked across all attendance in period
         att_qs = Attendance.objects.filter(
             employee=emp,
             date__gte=period.start_date,
@@ -1032,16 +1041,45 @@ def _recompute_payroll_for_attendance(att):
         hours_agg    = att_qs.aggregate(t=Sum('total_hours'))
         hours_worked = Decimal(str(hours_agg['t'] or 0))
         late_minutes = att_qs.aggregate(t=Sum('late_minutes'))['t'] or 0
-        days_present = att_qs.filter(status__in=['present','late']).count()
+        days_present = att_qs.filter(status__in=['present', 'late']).count()
         days_absent  = att_qs.filter(status='absent').count()
 
         basic_pay     = (hourly_rate * hours_worked).quantize(Decimal('0.01'), ROUND_HALF_UP)
         daily_rate    = hourly_rate * Decimal('8')
         monthly_equiv = hourly_rate * Decimal('8') * Decimal('22')
 
-        running       = basic_pay
-        total_earn    = basic_pay
-        total_deduct  = Decimal('0')
+        # ── Calendar: holiday / rest day premium ─────────────────────────
+        # MUST match the exact logic in run_payroll() so live edits and
+        # batch runs never disagree.
+        calendar_bonus = Decimal('0')
+        for att_rec in att_qs:
+            day_hours = Decimal(str(att_rec.total_hours or 0))
+            if day_hours <= 0:
+                continue
+
+            cal_entry = Calendar.objects.filter(date=att_rec.date).first()
+            if not cal_entry:
+                continue  # Regular workday — no adjustment
+
+            multiplier = Decimal(str(cal_entry.rate_multiplier or 1))
+            base_for_day = hourly_rate * day_hours
+
+            if cal_entry.type == 'rest' and not cal_entry.is_paid:
+                adjusted = base_for_day * multiplier
+                calendar_bonus += (adjusted - base_for_day)
+
+            elif cal_entry.type in ('regular_holiday', 'special_holiday'):
+                if day_hours > 0:
+                    adjusted = base_for_day * multiplier
+                    calendar_bonus += (adjusted - base_for_day)
+
+        if calendar_bonus > 0:
+            calendar_bonus = calendar_bonus.quantize(Decimal('0.01'), ROUND_HALF_UP)
+            basic_pay += calendar_bonus
+
+        running      = basic_pay
+        total_earn   = basic_pay
+        total_deduct = Decimal('0')
 
         vars_ctx = {
             'basic_pay':     float(basic_pay),
@@ -1060,7 +1098,14 @@ def _recompute_payroll_for_attendance(att):
 
         PayrollBreakdown.objects.filter(payroll=payroll).delete()
 
-        components = PayrollComponent.objects.filter(is_active=True).order_by('sort_order','id')
+        if calendar_bonus > 0:
+            PayrollBreakdown.objects.create(
+                payroll=payroll, component=None,
+                amount=calendar_bonus,
+                description='Holiday / Rest Day Pay Premium',
+            )
+
+        components = PayrollComponent.objects.filter(is_active=True).order_by('sort_order', 'id')
         for comp in components:
             override = EmployeePayrollComponent.objects.filter(
                 employee=emp, component=comp, is_active=True
@@ -1069,57 +1114,66 @@ def _recompute_payroll_for_attendance(att):
 
             if comp.calculation_type == 'percentage':
                 pct      = float(override_val if override_val else comp.default_value)
-                base_key = comp.pct_base or 'monthly_equiv'
+                base_key = getattr(comp, 'pct_base', None) or 'monthly_equiv'
                 base_val = vars_ctx.get(base_key, vars_ctx['monthly_equiv'])
                 amount   = Decimal(str(base_val * pct / 100))
-            elif comp.calculation_type == 'formula' and comp.formula:
+            elif comp.calculation_type == 'formula' and getattr(comp, 'formula', ''):
                 amount = _eval_formula_with_vars(comp.formula, vars_ctx)
             else:
                 amount = Decimal(str(override_val if override_val else comp.default_value))
 
-            op = comp.operator or ('+' if comp.type == 'earning' else '-')
+            op = getattr(comp, 'operator', None) or ('+' if comp.type == 'earning' else '-')
+            prev = running
             if   op == '+': running = running + amount
             elif op == '-': running = running - amount
             elif op == '*': running = running * amount if amount else running
-            elif op == '/': running = (running / amount).quantize(Decimal('0.01')) if amount else running
+            elif op == '/': running = (running / amount).quantize(Decimal('0.01'), ROUND_HALF_UP) if amount else running
 
-            delta = running - (running - amount if op == '+' else running + amount)
-            PayrollBreakdown.objects.create(
-                payroll=payroll, component=comp,
-                amount=amount, description=comp.description or comp.name,
-            )
-            if comp.type == 'earning':
-                total_earn += amount
+            delta = running - prev
+            if delta >= 0:
+                total_earn += delta
             else:
-                total_deduct += amount
+                total_deduct += abs(delta)
 
             vars_ctx['gross_pay'] = float(running)
 
-        # Apply adjustments
-        for adj in Adjustment.objects.filter(employee=emp, payroll_period=period):
+            PayrollBreakdown.objects.create(
+                payroll=payroll, component=comp,
+                amount=amount,
+                description=getattr(comp, 'description', None) or comp.name,
+            )
+
+        # ── Overtime adjustments (recomputed live from hours × ot_rate) ──
+        for adj in Adjustment.objects.filter(employee=emp, payroll_period=period, type='overtime'):
+            computed = (Decimal(str(adj.hours)) * ot_rate).quantize(Decimal('0.01'), ROUND_HALF_UP)
+            adj.rate   = ot_rate
+            adj.amount = computed
+            adj.save(update_fields=['rate', 'amount'])
+            running    += computed
+            total_earn += computed
+
+        # ── Leave adjustments (manual ₱ amount) ──────────────────────────
+        for adj in Adjustment.objects.filter(employee=emp, payroll_period=period, type='leave'):
             adj_amount = Decimal(str(adj.amount))
-            if adj.type == 'overtime':
+            if adj_amount >= 0:
                 running    += adj_amount
                 total_earn += adj_amount
-            elif adj.type == 'leave':
-                if adj_amount >= 0:
-                    running    += adj_amount
-                    total_earn += adj_amount
-                else:
-                    deduct = abs(adj_amount)
-                    running      -= deduct
-                    total_deduct += deduct
+            else:
+                deduct = abs(adj_amount)
+                running      -= deduct
+                total_deduct += deduct
 
         payroll.basic_pay        = basic_pay
-        payroll.gross_pay        = total_earn.quantize(Decimal('0.01'))
-        payroll.total_deductions = total_deduct.quantize(Decimal('0.01'))
-        payroll.net_pay          = running.quantize(Decimal('0.01'))
+        payroll.gross_pay        = total_earn.quantize(Decimal('0.01'), ROUND_HALF_UP)
+        payroll.total_deductions = total_deduct.quantize(Decimal('0.01'), ROUND_HALF_UP)
+        payroll.net_pay          = running.quantize(Decimal('0.01'), ROUND_HALF_UP)
         payroll.save()
 
     except Exception as e:
-        # Non-fatal — log but don't crash the attendance save
         import logging
-        logging.getLogger(__name__).warning(f'Payroll recompute failed after attendance edit: {e}')
+        logging.getLogger(__name__).warning(
+            f'Payroll recompute failed after attendance edit: {e}'
+        )
         
 
 

@@ -23,7 +23,7 @@ from django.db import transaction
 from accounts.access import admin_required, is_super_admin, is_hr_admin
 from django.db.models import Q, Sum, Max, Count
 from datetime import timedelta
-
+from django.core.paginator import Paginator
 from .models import (
     PayrollComponent, PayrollPeriod, Payroll,
     PayrollBreakdown, EmployeePayrollComponent, Adjustment,
