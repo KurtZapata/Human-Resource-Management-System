@@ -609,9 +609,9 @@ def get_grade(request, pk):
     return JsonResponse({
         'id':            sg.id,
         'name':          sg.name,
-        'hourly_rate':   str(sg.hourly_rate),
-        'overtime_rate': str(sg.overtime_rate),
-        'base_salary':   str(sg.base_salary),   # read-only display
+        'hourly_rate':   f"{sg.hourly_rate:.2f}",   # Formats '100.0000' -> '100.00'
+        'overtime_rate': f"{sg.overtime_rate:.2f}", # Formats cleanly to 2 decimal places
+        'base_salary':   f"{sg.base_salary:.2f}",   # Formats cleanly to 2 decimal places
     })
 
 
@@ -745,6 +745,12 @@ def users_view(request):
             emp_id    = request.POST.get('employee_id') or None
             role_id   = request.POST.get('role_id')
             is_active = request.POST.get('is_active', 'true') == 'true'
+
+            # ── Check for duplicate username before creation ─────────────────
+            if AuthUser.objects.filter(username=username).exists():
+                messages.error(request, f'Username "{username}" is already taken.')
+                return redirect('employees:users')
+            # ──────────────────────────────────────────────────────────────────
 
             auth = AuthUser.objects.create_user(
                 username   = username,

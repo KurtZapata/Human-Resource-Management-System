@@ -42,10 +42,27 @@
 
   /* Edit inline row highlight */
   tr.editing-row { background:var(--gold-100) !important; }
+
+  /* Message alerts spacing */
+  .alert-container { margin-bottom: 1.25rem; }
+  .alert { padding: 0.75rem 1.25rem; border-radius: var(--radius-md); font-size: 0.9rem; font-weight: 500; }
+  .alert-error { background: #FEE2E2; border: 1px solid #EF4444; color: #991B1B; }
+  .alert-success { background: #DCFCE7; border: 1px solid #22C55E; color: #166534; }
 </style>
 {% endblock %}
 
 {% block content %}
+
+<!-- ── System Feedback Alerts Block ── -->
+{% if messages %}
+<div class="alert-container">
+  {% for message in messages %}
+    <div class="alert alert-{% if message.tags == 'error' %}error{% else %}{{ message.tags }}{% endif %}">
+      {{ message }}
+    </div>
+  {% endfor %}
+</div>
+{% endif %}
 
 <!-- ── Filters ── -->
 <div class="filter-card">
@@ -183,11 +200,11 @@
         {% if records.number == num %}
           <span class="page-btn active">{{ num }}</span>
         {% elif num >= records.number|add:"-2" and num <= records.number|add:"2" %}
-          <a href="?{% if request.GET.emp_id %}emp_id={{ request.GET.emp_id }}&{% endif %}page={{ num }}" class="page-btn">{{ num }}</a>
+          <a href="?{% if request.GET.emp_id %}emp_id={{ request.GET.emp_id }}&{% endif %}{% if request.GET.from %}from={{ request.GET.from }}&{% endif %}{% if request.GET.to %}to={{ request.GET.to }}&{% endif %}{% if request.GET.status %}status={{ request.GET.status }}&{% endif %}page={{ num }}" class="page-btn">{{ num }}</a>
         {% endif %}
       {% endfor %}
       {% if records.has_next %}
-        <a href="?{% if request.GET.emp_id %}emp_id={{ request.GET.emp_id }}&{% endif %}page={{ records.next_page_number }}" class="page-btn">›</a>
+        <a href="?{% if request.GET.emp_id %}emp_id={{ request.GET.emp_id }}&{% endif %}{% if request.GET.from %}from={{ request.GET.from }}&{% endif %}{% if request.GET.to %}to={{ request.GET.to }}&{% endif %}{% if request.GET.status %}status={{ request.GET.status }}&{% endif %}page={{ records.next_page_number }}" class="page-btn">›</a>
       {% endif %}
     </div>
   </div>
@@ -245,7 +262,7 @@
   </div>
 </div>
 
-<!-- Manual Entry Modal (reused) -->
+<!-- Manual Entry Modal -->
 <div class="modal-backdrop" id="manual-att-modal">
   <div class="modal" style="max-width:480px;">
     <div class="modal-header"><h2>Manual Attendance Entry</h2><button class="btn-close" onclick="closeModal('manual-att-modal')">✕</button></div>

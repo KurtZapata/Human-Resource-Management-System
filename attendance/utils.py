@@ -18,9 +18,27 @@ from datetime import datetime, date, timedelta
 from decimal import Decimal
 
 
+def parse_time_string(s):
+    """
+    Parses a time string in either 'HH:MM' or 'HH:MM:SS' format.
+
+    NOTE: an earlier version of this helper padded short strings with
+    trailing zeros (e.g. '08:00'.ljust(8,'0') -> '08:00000'), which is
+    NOT a valid HH:MM:SS string and crashes strptime. Browser
+    <input type="time"> fields and most manual-entry forms submit
+    'HH:MM' (no seconds), so this bug fired on real form submissions.
+    This version detects the missing seconds component and appends
+    ':00' instead of blindly padding.
+    """
+    s = s.strip()
+    if len(s.split(':')) == 2:
+        s = s + ':00'
+    return datetime.strptime(s, '%H:%M:%S').time()
+
+
 def time_diff(t1, t2, allow_overnight=False):
     """
-    Returns a timedelta between two time objects or 'HH:MM:SS' strings.
+    Returns a timedelta between two time objects or 'HH:MM' / 'HH:MM:SS' strings.
 
     If allow_overnight=True and t2 is earlier than t1 (e.g. 23:00 → 01:30),
     treats it as a shift that crossed midnight and adds one day to t2.
@@ -28,9 +46,9 @@ def time_diff(t1, t2, allow_overnight=False):
     rather than a negative value — never let total_hours go negative.
     """
     if isinstance(t1, str):
-        t1 = datetime.strptime(t1[:8].ljust(8, '0'), '%H:%M:%S').time()
+        t1 = parse_time_string(t1)
     if isinstance(t2, str):
-        t2 = datetime.strptime(t2[:8].ljust(8, '0'), '%H:%M:%S').time()
+        t2 = parse_time_string(t2)
 
     base = date.today()
     d1 = datetime.combine(base, t1)
@@ -74,10 +92,10 @@ def calculate_late_minutes(time_in_am, workday_start='08:00:00'):
     if not time_in_am:
         return 0
     if isinstance(time_in_am, str):
-        t_in = datetime.strptime(time_in_am[:8].ljust(8, '0'), '%H:%M:%S').time()
+        t_in = parse_time_string(time_in_am)
     else:
         t_in = time_in_am
-    start = datetime.strptime(workday_start, '%H:%M:%S').time()
+    start = parse_time_string(workday_start)
 
     if t_in > start:
         base  = date.today()
@@ -95,10 +113,10 @@ def calculate_undertime_minutes(time_out_pm, workday_end='17:00:00'):
     if not time_out_pm:
         return 0
     if isinstance(time_out_pm, str):
-        t_out = datetime.strptime(time_out_pm[:8].ljust(8, '0'), '%H:%M:%S').time()
+        t_out = parse_time_string(time_out_pm)
     else:
         t_out = time_out_pm
-    end = datetime.strptime(workday_end, '%H:%M:%S').time()
+    end = parse_time_string(workday_end)
 
     if t_out < end:
         base  = date.today()

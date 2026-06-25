@@ -328,33 +328,29 @@ def update_attendance(request, pk):
     - Only updates time fields that were explicitly submitted with a value
     - Recalculates total_hours, late_minutes, undertime
     - Triggers payroll recompute if the record falls in a closed/finalized period
-    - Blocks edits if the payroll period is locked (closed + confirmed)
+    - Blocks edits if the individual employee's payroll has been confirmed/locked
     """
     if request.method != 'POST':
         return redirect('attendance:dashboard')
 
     att = get_object_or_404(Attendance, pk=pk)
 
-    # ── Lock check: block edits if payroll already confirmed ──────────────
-    locked_period = PayrollPeriod.objects.filter(
-        status='closed',
-        start_date__lte=att.date,
-        end_date__gte=att.date,
-    ).first()
-    if locked_period:
-        from payroll.models import Payroll as PayrollModel
-        confirmed = PayrollModel.objects.filter(
-            employee=att.employee,
-            payroll_period=locked_period,
-            is_confirmed=True,
-        ).exists()
-        if confirmed:
-            messages.error(
-                request,
-                f'Cannot edit attendance for {att.date}: '
-                f'payroll for this period has already been confirmed.'
-            )
-            return redirect('attendance:dashboard')
+    # ── Safe Lock Check: Direct check on the employee's payroll status ──
+    from payroll.models import Payroll as PayrollModel
+    confirmed = PayrollModel.objects.filter(
+        employee=att.employee,
+        payroll_period__start_date__lte=att.date,
+        payroll_period__end_date__gte=att.date,
+        is_confirmed=True,
+    ).exists()
+
+    if confirmed:
+        messages.error(
+            request,
+            f'Cannot edit attendance for {att.date}: '
+            f'payroll for this period has already been confirmed.'
+        )
+        return redirect('attendance:records')
 
     old = _att_to_dict(att)
     d   = request.POST
@@ -425,7 +421,7 @@ def update_attendance(request, pk):
         timestamp=timezone.now(),
     )
     messages.success(request, f'Attendance for {att.date} updated.')
-    return redirect('attendance:dashboard')
+    return redirect('attendance:records')
 
 
 @login_required
@@ -534,7 +530,7 @@ def employee_stats(request):
     hours_sum = qs.aggregate(t=Sum('total_hours'))['t'] or 0
 
     return JsonResponse({
-        'present':     qs.filter(status__in=['present','late']).count(),
+        'present':     qs.filter(status__id__in=['present','late']).count(),
         'absent':      qs.filter(status='absent').count(),
         'late':        qs.filter(status='late').count(),
         'leave':       leave_count,
