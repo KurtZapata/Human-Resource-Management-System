@@ -51,7 +51,6 @@
 
 {% block content %}
 
-<!-- Stats -->
 <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem;">
   <div class="stat-card">
     <div class="stat-icon blue">👤</div>
@@ -71,7 +70,6 @@
   </div>
 </div>
 
-<!-- Toolbar -->
 <div style="display:flex;gap:.75rem;align-items:center;background:var(--white);border:1px solid var(--gray-200);border-radius:var(--radius-lg);padding:.85rem 1.25rem;margin-bottom:1.25rem;flex-wrap:wrap;">
   <div class="search-bar" style="flex:1;min-width:200px;">
     <span class="search-icon">🔍</span>
@@ -90,7 +88,6 @@
   </select>
 </div>
 
-<!-- User Cards -->
 <div class="users-grid" id="users-grid">
   {% for user in users %}
   <div class="user-card {% if not user.is_active %}inactive{% endif %}"
@@ -117,7 +114,10 @@
           {% if user.role.name == 'SuperAdmin' %}badge-danger
           {% elif user.role.name == 'HRAdmin' %}badge-blue
           {% else %}badge-gold{% endif %}">
-          {{ user.role.name|default:"No Role" }}
+          {% if user.role.name == 'SuperAdmin' %}Super Admin
+          {% elif user.role.name == 'HRAdmin' %}HR Admin
+          {% elif user.role.name == 'StaffAdmin' %}Normal Admin
+          {% else %}No Role{% endif %}
         </span>
       </div>
     </div>
@@ -146,7 +146,7 @@
           {{ user.role_id|default:'null' }},
           {{ user.is_active|lower }}
         )">
-  ✏ Edit
+   ✏ Edit
 </button>
       <button class="btn btn-outline btn-sm"
               onclick="resetPassword({{ user.id }}, '{{ user.username|escapejs }}')">
@@ -167,14 +167,12 @@
   {% endfor %}
 </div>
 
-<!-- ══ ADD / EDIT USER MODAL ══ -->
 <div class="modal-body">
       <form id="user-form" method="post" action="{% url 'employees:users' %}">
         {% csrf_token %}
         <input type="hidden" name="action"  id="user-action"  value="create">
         <input type="hidden" name="user_id" id="user-id-input">
 
-        <!-- ── Role — shown first so it's impossible to miss ── -->
         <div class="form-group" style="margin-bottom:1.1rem;">
           <label class="form-label">
             Admin Role
@@ -182,66 +180,21 @@
               Controls what this user can access
             </span>
           </label>
-
-          <!-- Visual role cards -->
-          <div style="display:flex;flex-direction:column;gap:.4rem;margin-bottom:.6rem;"
-               id="role-card-group">
+          <select name="role_id" id="user-role-select" class="form-control">
+            <option value="">🚫 No Admin Access — employee portal only</option>
             {% for role in roles %}
-            <label style="display:flex;align-items:flex-start;gap:.75rem;padding:.75rem .9rem;
-                          border:1.5px solid var(--gray-200);border-radius:var(--radius-md);
-                          cursor:pointer;transition:all .15s;"
-                   id="role-card-{{ role.id }}"
-                   onclick="selectRoleCard({{ role.id }})">
-              <input type="radio" name="role_id" value="{{ role.id }}"
-                     id="role-radio-{{ role.id }}"
-                     style="margin-top:.2rem;accent-color:var(--blue-700);flex-shrink:0;">
-              <div>
-                <div style="font-weight:700;font-size:.9rem;color:var(--gray-800);
-                            display:flex;align-items:center;gap:.5rem;">
-                  {% if role.name == 'SuperAdmin' %}👑
-                  {% elif role.name == 'HRAdmin' %}🛡
-                  {% else %}👤{% endif %}
-                  {{ role.name }}
-                </div>
-                <div style="font-size:.75rem;color:var(--gray-400);margin-top:.15rem;">
-                  {% if role.name == 'SuperAdmin' %}
-                    Full system access — all pages, settings, users, audit log
-                  {% elif role.name == 'HRAdmin' %}
-                    Full HR access — employees, attendance, payroll; cannot manage users or settings
-                  {% elif role.name == 'StaffAdmin' %}
-                    Limited access — view attendance and payroll reports only
-                  {% else %}
-                    {{ role.description|default:"Custom role" }}
-                  {% endif %}
-                </div>
-              </div>
-            </label>
+            <option value="{{ role.id }}">
+              {% if role.name == 'SuperAdmin' %}👑 Super Admin — full system access
+              {% elif role.name == 'HRAdmin' %}🛡 HR Admin — full access except Company Settings
+              {% elif role.name == 'StaffAdmin' %}👤 Normal Admin — Employee/Department/Position only, view payroll
+              {% else %}{{ role.name }}{% endif %}
+            </option>
             {% endfor %}
-
-            <!-- No role option -->
-            <label style="display:flex;align-items:flex-start;gap:.75rem;padding:.75rem .9rem;
-                          border:1.5px solid var(--gray-200);border-radius:var(--radius-md);
-                          cursor:pointer;transition:all .15s;"
-                   id="role-card-none"
-                   onclick="selectRoleCard(null)">
-              <input type="radio" name="role_id" value=""
-                     id="role-radio-none" checked
-                     style="margin-top:.2rem;accent-color:var(--blue-700);flex-shrink:0;">
-              <div>
-                <div style="font-weight:700;font-size:.9rem;color:var(--gray-500);">
-                  🚫 No Admin Access
-                </div>
-                <div style="font-size:.75rem;color:var(--gray-400);margin-top:.15rem;">
-                  Employee can only access the time-in / time-out portal
-                </div>
-              </div>
-            </label>
-          </div>
+          </select>
         </div>
 
         <hr style="border:none;border-top:1px solid var(--gray-200);margin:1rem 0;">
 
-        <!-- ── Account fields ── -->
         <div class="form-group" style="margin-bottom:.9rem;">
           <label class="form-label">Username <span style="color:var(--danger)">*</span></label>
           <input type="text" name="username" id="user-username" class="form-control"
@@ -285,7 +238,6 @@
       </form>
     </div>
 
-<!-- ══ RESET PASSWORD MODAL ══ -->
 <div class="modal-backdrop" id="reset-pwd-modal">
   <div class="modal" style="max-width:400px;">
     <div class="modal-header">
@@ -330,7 +282,7 @@
       const cactive= card.dataset.active || '';
       card.style.display = (
         (!q      || name.includes(q)) &&
-        (!role   || crole  === role)  &&
+        (!role   || crole   === role)  &&
         (!active || cactive === active)
       ) ? '' : 'none';
     });
@@ -341,35 +293,12 @@
     document.getElementById('user-action').value            = 'update';
     document.getElementById('user-id-input').value          = id;
     document.getElementById('user-username').value          = username;
-    document.getElementById('user-employee').value          = empId   || '';
+    document.getElementById('user-employee').value          = empId    || '';
+    document.getElementById('user-role-select').value       = roleId   || '';
     document.getElementById('user-status').value            = isActive ? 'true' : 'false';
     document.getElementById('pwd-required').style.display   = 'none';
     document.getElementById('pwd-hint').textContent         = 'Leave blank to keep existing password.';
-
-    // Pre-select the role card
-    selectRoleCard(roleId || null);
-
     openModal('add-user-modal');
-  }
-
-  function selectRoleCard(roleId) {
-    // Reset all card borders
-    document.querySelectorAll('[id^="role-card-"]').forEach(card => {
-      card.style.borderColor   = 'var(--gray-200)';
-      card.style.background    = 'var(--white)';
-    });
-
-    const targetId = roleId ? `role-card-${roleId}` : 'role-card-none';
-    const card     = document.getElementById(targetId);
-    if (card) {
-      card.style.borderColor = 'var(--blue-600)';
-      card.style.background  = 'var(--blue-50)';
-    }
-
-    // Check the radio
-    const radioId = roleId ? `role-radio-${roleId}` : 'role-radio-none';
-    const radio   = document.getElementById(radioId);
-    if (radio) radio.checked = true;
   }
 
   function resetPassword(id, username) {

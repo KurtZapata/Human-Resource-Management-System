@@ -16,13 +16,15 @@ call sites now just call compute_employee_payroll() and persist the result.
 THE MASTER FORMULA (applied in this exact order):
   1. hours_worked     = SUM(Attendance.total_hours) for the period
   2. basic_pay        = hourly_rate × hours_worked
-  3. basic_pay       += calendar_premium  (holiday / rest day extra pay)
-  4. running_total    = basic_pay
+  3. basic_pay       += calendar_premium          (holiday / rest day worked)
+  4. basic_pay       += unworked_holiday_pay      (paid regular holiday, absent)
+  5. running_total    = basic_pay
      for each active PayrollComponent (in sort_order):
          amount = fixed | percentage-of-variable | formula
          running_total = running_total <operator> amount      (+, -, ×, ÷)
-  5. running_total   += Σ(overtime_hours × overtime_rate)       [from Adjustment]
-  6. running_total   += Σ(leave adjustment amounts)              [manual, ± by HR]
+  6. running_total   += Σ(overtime_hours × overtime_rate)       [from Adjustment]
+  7. running_total   += Σ(leave adjustment amounts)              [manual, ± by HR]
+  8. running_total   -= Σ(custom deduction amounts)               [manual, always −]
   net_pay = running_total
 
 This function is PURE with respect to the database: it only reads
@@ -114,6 +116,53 @@ def compute_calendar_premium(employee, period, hourly_rate):
     return total_premium.quantize(Decimal('0.01'), ROUND_HALF_UP), breakdown
 
 
+def compute_unworked_holiday_pay(employee, period, hourly_rate):
+    """
+    Philippine labor law (Labor Code Art. 94) entitles employees to their
+    full daily wage on a Regular Holiday even if they did NOT work that
+    day — this is separate from, and in addition to, the 2x premium paid
+    for actually working ON a holiday (handled by compute_calendar_premium).
+
+    A date qualifies when:
+      - it has a Calendar entry with type='regular_holiday' and is_paid=True
+      - the employee has no Attendance hours recorded for that date
+        (absent, or no Attendance row at all)
+
+    Scope note: only 'regular_holiday' qualifies, matching DOLE rules —
+    Special Non-Working Days follow "no work, no pay" unless company
+    policy says otherwise, and rest days never carry this entitlement.
+
+    Returns (total_pay: Decimal, breakdown: list[dict]).
+    """
+    from calendar_app.models import Calendar
+    from attendance.models import Attendance
+
+    daily_rate = hourly_rate * STANDARD_HOURS_PER_DAY
+    total_pay  = Decimal('0')
+    breakdown  = []
+
+    holidays = Calendar.objects.filter(
+        date__gte=period.start_date,
+        date__lte=period.end_date,
+        type='regular_holiday',
+        is_paid=True,
+    )
+
+    for h in holidays:
+        att = Attendance.objects.filter(employee=employee, date=h.date).first()
+        worked_hours = Decimal(str(att.total_hours)) if (att and att.total_hours) else Decimal('0')
+
+        if worked_hours <= 0:
+            total_pay += daily_rate
+            breakdown.append({
+                'date':        str(h.date),
+                'description': h.description or 'Regular Holiday',
+                'amount':      float(daily_rate),
+            })
+
+    return total_pay.quantize(Decimal('0.01'), ROUND_HALF_UP), breakdown
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Formula evaluation (safe — no eval() on untrusted raw strings)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -187,14 +236,15 @@ def compute_employee_payroll(employee, period, components=None):
 
     Returns dict:
         {
-          'hours_worked':     Decimal,
-          'hourly_rate':      Decimal,
-          'basic_pay':        Decimal,   # includes calendar premium
-          'calendar_premium': Decimal,
-          'gross_pay':        Decimal,
-          'total_deductions': Decimal,
-          'net_pay':          Decimal,
-          'breakdown':        [ {name, operator, amount, type, description}, ... ],
+          'hours_worked':         Decimal,
+          'hourly_rate':          Decimal,
+          'basic_pay':            Decimal,   # includes calendar premium + unworked holiday pay
+          'calendar_premium':     Decimal,
+          'unworked_holiday_pay': Decimal,
+          'gross_pay':            Decimal,
+          'total_deductions':     Decimal,
+          'net_pay':              Decimal,
+          'breakdown':            [ {name, operator, amount, type, description}, ... ],
         }
 
     Raises:
@@ -228,6 +278,12 @@ def compute_employee_payroll(employee, period, components=None):
     calendar_premium, calendar_breakdown = compute_calendar_premium(employee, period, hourly_rate)
     basic_pay += calendar_premium
 
+    # ── Step 3b: Unworked regular-holiday pay (Labor Code Art. 94) ──────────
+    unworked_holiday_pay, unworked_holiday_breakdown = compute_unworked_holiday_pay(
+        employee, period, hourly_rate
+    )
+    basic_pay += unworked_holiday_pay
+
     daily_rate    = hourly_rate * STANDARD_HOURS_PER_DAY
     monthly_equiv = daily_rate * STANDARD_WORKING_DAYS
 
@@ -258,6 +314,15 @@ def compute_employee_payroll(employee, period, components=None):
             'amount':      float(calendar_premium),
             'type':        'earning',
             'description': f'{len(calendar_breakdown)} premium day(s) worked',
+        })
+
+    if unworked_holiday_pay > 0:
+        breakdown.append({
+            'name':        'Regular Holiday Pay (Unworked)',
+            'operator':    '+',
+            'amount':      float(unworked_holiday_pay),
+            'type':        'earning',
+            'description': f'{len(unworked_holiday_breakdown)} unworked paid holiday(s)',
         })
 
     # ── Step 4: Modular components ────────────────────────────────────────────
@@ -334,15 +399,31 @@ def compute_employee_payroll(employee, period, components=None):
                 'description': adj.description or 'Unpaid leave',
             })
 
+    # ── Step 7: Custom deductions — flat ₱ amount, always subtracted ──────────
+    #            (cash advance repayment, damages, etc. — entered by HR as a
+    #            plain positive number; unlike leave there's no sign ambiguity)
+    for adj in Adjustment.objects.filter(employee=employee, payroll_period=period, type='deduction'):
+        deduct = abs(Decimal(str(adj.amount)))
+        running      -= deduct
+        total_deduct += deduct
+        breakdown.append({
+            'name':        f'Custom Deduction ({adj.description or ""})',
+            'operator':    '-',
+            'amount':      float(deduct),
+            'type':        'deduction',
+            'description': adj.description or 'Custom deduction',
+        })
+
     net_pay = running.quantize(Decimal('0.01'), ROUND_HALF_UP)
 
     return {
-        'hours_worked':     hours_worked,
-        'hourly_rate':      hourly_rate,
-        'basic_pay':        basic_pay,
-        'calendar_premium': calendar_premium,
-        'gross_pay':        total_earn.quantize(Decimal('0.01'), ROUND_HALF_UP),
-        'total_deductions': total_deduct.quantize(Decimal('0.01'), ROUND_HALF_UP),
-        'net_pay':          net_pay,
-        'breakdown':        breakdown,
+        'hours_worked':         hours_worked,
+        'hourly_rate':          hourly_rate,
+        'basic_pay':            basic_pay,
+        'calendar_premium':     calendar_premium,
+        'unworked_holiday_pay': unworked_holiday_pay,
+        'gross_pay':            total_earn.quantize(Decimal('0.01'), ROUND_HALF_UP),
+        'total_deductions':     total_deduct.quantize(Decimal('0.01'), ROUND_HALF_UP),
+        'net_pay':              net_pay,
+        'breakdown':            breakdown,
     }

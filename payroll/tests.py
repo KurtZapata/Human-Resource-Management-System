@@ -475,3 +475,161 @@ class PayrollPeriodOverlapTests(TestCase):
             end_date__gte=date(2026, 6, 16),
         ).exists()
         self.assertFalse(overlap_exists)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  9. Unworked regular-holiday pay (Labor Code Art. 94)
+#     Found during a manual audit of the attendance->payroll pipeline:
+#     the engine previously only paid a premium for holidays actually
+#     WORKED, with no entitlement at all for a paid regular holiday the
+#     employee did not work. This was a real underpayment bug.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class UnworkedHolidayPayTests(PayrollEngineTestBase):
+
+    def test_absent_on_paid_regular_holiday_still_receives_a_days_pay(self):
+        self._log_day(date(2026, 6, 1))  # ordinary day, 8h -> 800.00
+        Calendar.objects.create(
+            date=date(2026, 6, 12), type='regular_holiday',
+            is_paid=True, rate_multiplier=Decimal('2.00'),
+            description='Independence Day', created_by=self.user,
+        )
+        # Deliberately no Attendance row for June 12 -- employee was absent
+        result = compute_employee_payroll(self.employee, self.period, components=[])
+
+        self.assertEqual(result['calendar_premium'], Decimal('0.00'))       # did not work it
+        self.assertEqual(result['unworked_holiday_pay'], Decimal('800.00'))  # but still entitled to pay
+        self.assertEqual(result['basic_pay'], Decimal('1600.00'))           # 800 worked + 800 holiday
+        self.assertEqual(result['net_pay'], Decimal('1600.00'))
+
+    def test_no_attendance_row_at_all_on_holiday_still_pays(self):
+        """Same as above but with zero attendance anywhere in the period --
+        confirms the holiday lookup doesn't depend on any other row existing."""
+        Calendar.objects.create(
+            date=date(2026, 6, 12), type='regular_holiday',
+            is_paid=True, rate_multiplier=Decimal('2.00'),
+            description='Independence Day', created_by=self.user,
+        )
+        result = compute_employee_payroll(self.employee, self.period, components=[])
+        self.assertEqual(result['unworked_holiday_pay'], Decimal('800.00'))
+        self.assertEqual(result['basic_pay'], Decimal('800.00'))
+
+    def test_working_the_holiday_does_not_also_trigger_unworked_pay(self):
+        """Working the holiday earns the premium -- it must NOT also earn
+        the separate 'unworked' entitlement on top of that (no double pay)."""
+        self._log_day(date(2026, 6, 12))  # worked the holiday itself, 8h
+        Calendar.objects.create(
+            date=date(2026, 6, 12), type='regular_holiday',
+            is_paid=True, rate_multiplier=Decimal('2.00'),
+            description='Independence Day', created_by=self.user,
+        )
+        result = compute_employee_payroll(self.employee, self.period, components=[])
+        self.assertEqual(result['calendar_premium'], Decimal('800.00'))
+        self.assertEqual(result['unworked_holiday_pay'], Decimal('0.00'))   # no double-pay
+        self.assertEqual(result['basic_pay'], Decimal('1600.00'))
+
+    def test_unpaid_special_holiday_grants_no_entitlement_if_absent(self):
+        """Only 'regular_holiday' carries the unworked-pay entitlement --
+        Special Non-Working Days follow no-work-no-pay per DOLE rules."""
+        Calendar.objects.create(
+            date=date(2026, 6, 6), type='special_holiday',
+            is_paid=False, rate_multiplier=Decimal('1.30'),
+            description='Special non-working day', created_by=self.user,
+        )
+        result = compute_employee_payroll(self.employee, self.period, components=[])
+        self.assertEqual(result['unworked_holiday_pay'], Decimal('0.00'))
+        self.assertEqual(result['basic_pay'], Decimal('0.00'))
+
+    def test_absent_on_rest_day_grants_no_entitlement(self):
+        """Rest days never carry the unworked-pay entitlement, paid or not."""
+        Calendar.objects.create(
+            date=date(2026, 6, 6), type='rest',
+            is_paid=True, rate_multiplier=Decimal('1.00'),
+            description='Weekly rest day', created_by=self.user,
+        )
+        result = compute_employee_payroll(self.employee, self.period, components=[])
+        self.assertEqual(result['unworked_holiday_pay'], Decimal('0.00'))
+
+    def test_multiple_unworked_paid_holidays_in_one_period_all_count(self):
+        Calendar.objects.create(
+            date=date(2026, 6, 6), type='regular_holiday', is_paid=True,
+            rate_multiplier=Decimal('2.00'), created_by=self.user,
+        )
+        Calendar.objects.create(
+            date=date(2026, 6, 12), type='regular_holiday', is_paid=True,
+            rate_multiplier=Decimal('2.00'), created_by=self.user,
+        )
+        result = compute_employee_payroll(self.employee, self.period, components=[])
+        # Two unworked paid holidays x 800.00 each = 1600.00
+        self.assertEqual(result['unworked_holiday_pay'], Decimal('1600.00'))
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  10. Custom deductions (cash advance repayment, damages, etc.)
+#      Unlike leave, this is always a flat positive amount that is always
+#      subtracted -- no sign ambiguity, simpler UX for a one-off charge.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class CustomDeductionTests(PayrollEngineTestBase):
+
+    def test_custom_deduction_subtracts_from_net_pay(self):
+        self._log_day(date(2026, 6, 1))  # basic = 800.00
+        Adjustment.objects.create(
+            employee=self.employee, payroll_period=self.period,
+            type='deduction', hours=Decimal('0'), rate=Decimal('0'),
+            amount=Decimal('250.00'), description='Cash advance repayment',
+            created_by=self.user,
+        )
+        result = compute_employee_payroll(self.employee, self.period, components=[])
+        self.assertEqual(result['net_pay'], Decimal('550.00'))  # 800 - 250
+        self.assertEqual(result['total_deductions'], Decimal('250.00'))
+
+    def test_custom_deduction_always_subtracts_even_if_entered_as_negative(self):
+        """Defensive: even if a negative number somehow ends up in amount,
+        the engine takes abs() so it can never accidentally ADD pay."""
+        self._log_day(date(2026, 6, 1))
+        Adjustment.objects.create(
+            employee=self.employee, payroll_period=self.period,
+            type='deduction', hours=Decimal('0'), rate=Decimal('0'),
+            amount=Decimal('-250.00'), description='Damages',
+            created_by=self.user,
+        )
+        result = compute_employee_payroll(self.employee, self.period, components=[])
+        self.assertEqual(result['net_pay'], Decimal('550.00'))  # still subtracted
+
+    def test_multiple_custom_deductions_sum_correctly(self):
+        self._log_day(date(2026, 6, 1))  # basic = 800.00
+        Adjustment.objects.create(
+            employee=self.employee, payroll_period=self.period, type='deduction',
+            hours=Decimal('0'), rate=Decimal('0'), amount=Decimal('100.00'),
+            description='Uniform cost', created_by=self.user,
+        )
+        Adjustment.objects.create(
+            employee=self.employee, payroll_period=self.period, type='deduction',
+            hours=Decimal('0'), rate=Decimal('0'), amount=Decimal('50.00'),
+            description='ID replacement', created_by=self.user,
+        )
+        result = compute_employee_payroll(self.employee, self.period, components=[])
+        self.assertEqual(result['net_pay'], Decimal('650.00'))  # 800 - 100 - 50
+        self.assertEqual(result['total_deductions'], Decimal('150.00'))
+
+    def test_custom_deduction_combined_with_overtime_and_leave(self):
+        self._log_day(date(2026, 6, 1))  # basic = 800.00
+        Adjustment.objects.create(
+            employee=self.employee, payroll_period=self.period, type='overtime',
+            hours=Decimal('2'), rate=Decimal('0'), amount=Decimal('0'),
+            description='OT', created_by=self.user,
+        )
+        Adjustment.objects.create(
+            employee=self.employee, payroll_period=self.period, type='leave',
+            hours=Decimal('8'), amount=Decimal('800.00'),
+            leave_type_id=1, description='Paid leave', created_by=self.user,
+        )
+        Adjustment.objects.create(
+            employee=self.employee, payroll_period=self.period, type='deduction',
+            hours=Decimal('0'), rate=Decimal('0'), amount=Decimal('300.00'),
+            description='Cash advance', created_by=self.user,
+        )
+        result = compute_employee_payroll(self.employee, self.period, components=[])
+        # 800 (basic) + 250 (2h OT x 125) + 800 (leave pay) - 300 (deduction) = 1550.00
+        self.assertEqual(result['net_pay'], Decimal('1550.00'))

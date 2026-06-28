@@ -24,7 +24,7 @@ from accounts.models import AuditLog
 from employees.views import _branding
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 def calendar_index(request):
     """
     Main company calendar page (Webpage #5).
@@ -60,7 +60,7 @@ def calendar_index(request):
     return render(request, 'hrms/calendar_admin.html', context)
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 @require_POST
 def configure_day(request):
     """
@@ -121,7 +121,7 @@ def configure_day(request):
     return redirect('calendar_app:index')
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 @require_POST
 def remove_day(request):
     """
@@ -149,7 +149,7 @@ def remove_day(request):
     return redirect('calendar_app:index')
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 @require_POST
 def add_holiday(request):
     """
@@ -161,7 +161,7 @@ def add_holiday(request):
     return configure_day(request)
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 def get_day_info(request):
     """
     AJAX GET: Returns configuration for a specific date.
@@ -193,7 +193,7 @@ def get_day_info(request):
     })
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 def calendar_api_month(request):
     """
     AJAX GET: Returns all Calendar entries for a given year+month.

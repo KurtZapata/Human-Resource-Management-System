@@ -341,6 +341,22 @@
           </table>
         </div>
       </div>
+
+      <div class="card" style="margin-top:1.25rem;">
+        <div class="card-header"><h3>⏰ Lateness Tally</h3></div>
+        <div class="card-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+            <div class="stat-card" style="border-left:3px solid var(--warning);">
+              <div class="stat-icon gold">⏰</div>
+              <div><div class="stat-num">{{ lateness.late_count }}</div><div class="stat-label">Times Late (all-time)</div></div>
+            </div>
+            <div class="stat-card" style="border-left:3px solid var(--danger);">
+              <div class="stat-icon red">⏱</div>
+              <div><div class="stat-num">{{ lateness.total_late_minutes }}</div><div class="stat-label">Total Late Minutes</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div class="dtab-panel" id="tab-payroll">
@@ -388,18 +404,29 @@
       <div class="card">
         <div class="card-header"><h3>Leave Balances</h3></div>
         <div class="card-body">
-          {% for lb in leave_balances %}
+          {% for entry in leave_summary %}
           <div class="leave-bar-wrap">
             <div class="leave-bar-label">
-              <span>{{ lb.leave_type.name }} {% if lb.leave_type.is_paid %}<span class="badge badge-success" style="font-size:.65rem;">Paid</span>{% else %}<span class="badge badge-danger" style="font-size:.65rem;">Unpaid</span>{% endif %}</span>
-              <span>{{ lb.remaining_days }} / {{ lb.leave_type.max_days }} days remaining</span>
+              <span>
+                {{ entry.name }}
+                {% if entry.is_paid %}<span class="badge badge-success" style="font-size:.65rem;">Paid</span>
+                {% else %}<span class="badge badge-danger" style="font-size:.65rem;">Unpaid</span>{% endif %}
+              </span>
+              <span>{{ entry.used_days|floatformat:"1" }} used / {{ entry.remaining_days|floatformat:"1" }} remaining of {{ entry.max_days }}</span>
             </div>
             <div class="leave-bar-track">
-              <div class="leave-bar-fill" style="width:{% widthratio lb.remaining_days lb.leave_type.max_days 100 %}%;{% if lb.remaining_days <= 1 %}background:var(--danger);{% elif lb.remaining_days <= 3 %}background:var(--warning);{% endif %}"></div>
+              <div class="leave-bar-fill"
+                   style="width:{% widthratio entry.remaining_days entry.max_days 100 %}%;
+                          {% if entry.remaining_days <= 1 %}background:var(--danger);
+                          {% elif entry.remaining_days <= 3 %}background:var(--warning);{% endif %}">
+              </div>
             </div>
           </div>
           {% empty %}
-          <p class="text-sm text-gray" style="text-align:center;padding:1.5rem 0;">No leave balances configured for this employee.</p>
+          <p class="text-sm text-gray" style="text-align:center;padding:1.5rem 0;">
+            No leave types have been configured yet.
+            <a href="{% url 'employees:leave_types' %}">Set up leave types →</a>
+          </p>
           {% endfor %}
         </div>
       </div>

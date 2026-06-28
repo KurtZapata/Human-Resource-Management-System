@@ -8,6 +8,8 @@ NOTE: Every mutating view writes to AuditLog (required for grading).
 
 import json
 import csv
+import random
+import string
 from datetime import date, timedelta
 
 from django.shortcuts import render, redirect, get_object_or_404
@@ -18,141 +20,21 @@ from django.contrib import messages
 from django.core.paginator import Paginator
 from django.db.models import Q, Count
 from django.utils import timezone
-from accounts.access import admin_required, is_super_admin, is_hr_admin
+from django.contrib.auth.models import User as AuthUser
 
+from accounts.access import admin_required, is_super_admin, is_hr_admin, role_display_name
+from accounts.models import AuditLog, Role, Permission, RolePermission, LeaveType
 from .models import (
     Employee, Department, Position,
     SalaryGrade, CompanySettings, SystemUser, LeaveBalance,
 )
-from .utils import generate_employee_code, generate_username, generate_temp_password, create_system_user_for_employee
-from accounts.models import AuditLog, Role, Permission, RolePermission
+from .utils import (
+    generate_employee_code, generate_username, 
+    generate_temp_password, create_system_user_for_employee
+)
 
 
 # ── Employee List & Search ────────────────────────────────────────────────────
-
-@admin_required
-def employee_update(request, pk):
-    """
-    POST: Update an existing employee's fields.
-    Called when the admin submits the edit modal on the employee list page.
-    URL: /employees/<pk>/update/
-    """
-    if request.method != 'POST':
-        return redirect('employees:list')
-
-    emp = get_object_or_404(Employee, pk=pk)
-    old = _emp_to_dict(emp)   # snapshot before changes (for audit log)
-    d   = request.POST
-
-    # ── Personal info ─────────────────────────────────────────────────────────
-    emp.first_name = d.get('first_name', emp.first_name).strip()
-    emp.last_name  = d.get('last_name',  emp.last_name).strip()
-    emp.email      = d.get('email',      emp.email).strip().lower()
-    emp.phone      = d.get('phone',      emp.phone).strip()
-    emp.address    = d.get('address',    emp.address).strip()
-
-    # ── Employment info ───────────────────────────────────────────────────────
-    submitted_code = d.get('employee_code', '').strip()
-    # Only update code if changed and not already taken by another employee
-    if submitted_code and submitted_code != emp.employee_code:
-        if Employee.objects.filter(employee_code=submitted_code).exclude(pk=pk).exists():
-            messages.error(request, f'Employee code "{submitted_code}" is already in use.')
-            return redirect('employees:list')
-        emp.employee_code = submitted_code
-
-    date_hired = d.get('date_hired', '').strip()
-    if date_hired:
-        emp.date_hired = date_hired
-
-    emp.employment_type = d.get('employment_type', emp.employment_type)
-    emp.status          = d.get('status',          emp.status)
-
-    # ── ForeignKey fields (only update if a value was submitted) ─────────────
-    dept_id  = d.get('department_id',  '').strip()
-    pos_id   = d.get('position_id',    '').strip()
-    grade_id = d.get('salary_grade_id','').strip()
-
-    if dept_id:  emp.department_id   = dept_id
-    if pos_id:   emp.position_id     = pos_id
-    if grade_id: emp.salary_grade_id = grade_id
-
-    # ── NEW fields updates ────────────────────────────────────────────────────
-    for field in [
-        'middle_name', 'gender', 'civil_status', 'nationality',
-        'tin_number', 'sss_number', 'philhealth_number', 'pagibig_number',
-        'emergency_contact_name', 'emergency_contact_phone',
-        'emergency_contact_relationship',
-    ]:
-        val = d.get(field, '').strip()
-        if val != '':
-            setattr(emp, field, val)
-
-    for date_field in ['birthdate', 'contract_start', 'contract_end']:
-        val = d.get(date_field, '').strip()
-        if val:
-            setattr(emp, date_field, val)
-        elif val == '':
-            pass  # Unchanged
-
-    emp.updated_at = timezone.now()
-    emp.save()
-
-    # ── Sync role on linked SystemUser ────────────────────────────────────────
-    role_id = d.get('role_id', '').strip()
-    try:
-        sys_user = emp.systemuser
-        if role_id:
-            sys_user.role = Role.objects.get(pk=int(role_id))
-        else:
-            sys_user.role = None
-        sys_user.save()
-        # Keep Django auth user staff flag in sync with SuperAdmin
-        from django.contrib.auth.models import User as AuthUser
-        try:
-            auth = AuthUser.objects.get(username=sys_user.username)
-            auth.is_staff = (sys_user.role and sys_user.role.name == 'SuperAdmin')
-            auth.save()
-        except AuthUser.DoesNotExist:
-            pass
-    except Exception:
-        # No SystemUser linked yet — create one if a role was selected
-        if role_id:
-            from django.contrib.auth.models import User as AuthUser
-            auto_username = generate_username(emp.first_name, emp.last_name)
-            pwd  = generate_temp_password()
-            role = Role.objects.get(pk=int(role_id))
-            auth = AuthUser.objects.create_user(
-                username   = auto_username,
-                password   = pwd,
-                first_name = emp.first_name,
-                last_name  = emp.last_name,
-                email      = emp.email,
-                is_active  = True,
-                is_staff   = (role.name == 'SuperAdmin'),
-            )
-            SystemUser.objects.create(
-                username      = auto_username,
-                password_hash = auth.password,
-                employee      = emp,
-                role          = role,
-                is_active     = True,
-            )
-            messages.info(request, f'System account "{auto_username}" created with role {role.name}.')
-
-    # ── Write audit log ───────────────────────────────────────────────────────
-    AuditLog.objects.create(
-        user       = request.user,
-        action     = 'UPDATE',
-        table_name = 'employees_employee',
-        record_id  = emp.id,
-        old_value  = old,
-        new_value  = _emp_to_dict(emp),
-        timestamp  = timezone.now(),
-    )
-
-    messages.success(request, f'Employee {emp.first_name} {emp.last_name} updated successfully.')
-    return redirect('employees:list')
-
 
 @admin_required
 def employee_list(request):
@@ -186,10 +68,10 @@ def employee_list(request):
     soon  = today + timedelta(days=30)
 
     stats = {
-        'total':            Employee.objects.count(),
-        'active':           Employee.objects.filter(status='active').count(),
-        'inactive':         Employee.objects.filter(status='inactive').count(),
-        'contract':         Employee.objects.filter(employment_type='contract').count(),
+        'total':             Employee.objects.count(),
+        'active':            Employee.objects.filter(status='active').count(),
+        'inactive':          Employee.objects.filter(status='inactive').count(),
+        'contract':          Employee.objects.filter(employment_type='contract').count(),
         'expiring_soon':    Employee.objects.filter(
                                 employment_type='contract',
                                 status='active',
@@ -244,21 +126,18 @@ def employee_detail(request, pk):
         employee=emp
     ).select_related('payroll_period').order_by('-payroll_period__start_date')
 
-    from .models import LeaveBalance
-    leave_balances = LeaveBalance.objects.filter(
-        employee=emp
-    ).select_related('leave_type')
-
-    from accounts.models import Role
-    roles = Role.objects.all()
+    from .leave_balance import get_leave_summary, get_lateness_summary
+    leave_summary = get_leave_summary(emp)
+    lateness      = get_lateness_summary(emp)
 
     return render(request, 'hrms/employee_detail.html', {
         'employee':          emp,
         'recent_attendance': recent_attendance,
         'payroll_history':   payroll_history,
-        'leave_balances':    leave_balances,
-        'roles':             roles,
-        **_branding(),
+        'leave_summary':     leave_summary,
+        'lateness':          lateness,
+        'roles':             Role.objects.all(),
+        'brand':             _branding(),
     })
 
 
@@ -266,9 +145,6 @@ def employee_detail(request, pk):
 def employee_create(request):
     """
     POST: Creates a new employee.
-    - Auto-generates employee_code in YYYY-NNNN format if blank or duplicate
-    - Auto-creates system user account (username + temp password)
-    - Stores credentials in session for the popup modal
     """
     if request.method != 'POST':
         return redirect('employees:list')
@@ -297,7 +173,6 @@ def employee_create(request):
             department_id   = d.get('department_id') or None,
             position_id     = d.get('position_id') or None,
             salary_grade_id = d.get('salary_grade_id') or None,
-            # ── NEW fields ──────────────────────────────────
             middle_name     = d.get('middle_name', '').strip(),
             birthdate       = d.get('birthdate') or None,
             gender          = d.get('gender', '').strip(),
@@ -321,8 +196,6 @@ def employee_create(request):
     manual_username = d.get('username', '').strip()
     manual_password = d.get('temp_password', '').strip()
     role_id         = d.get('role_id', '').strip() or None
-
-    from django.contrib.auth.models import User as AuthUser
 
     if manual_username or role_id:
         username = manual_username or generate_username(emp.first_name, emp.last_name)
@@ -386,6 +259,116 @@ def employee_create(request):
 
 
 @admin_required
+def employee_update(request, pk):
+    """
+    POST: Update an existing employee's fields.
+    """
+    if request.method != 'POST':
+        return redirect('employees:list')
+
+    emp = get_object_or_404(Employee, pk=pk)
+    old = _emp_to_dict(emp)
+    d   = request.POST
+
+    emp.first_name = d.get('first_name', emp.first_name).strip()
+    emp.last_name  = d.get('last_name',  emp.last_name).strip()
+    emp.email      = d.get('email',      emp.email).strip().lower()
+    emp.phone      = d.get('phone',      emp.phone).strip()
+    emp.address    = d.get('address',    emp.address).strip()
+
+    submitted_code = d.get('employee_code', '').strip()
+    if submitted_code and submitted_code != emp.employee_code:
+        if Employee.objects.filter(employee_code=submitted_code).exclude(pk=pk).exists():
+            messages.error(request, f'Employee code "{submitted_code}" is already in use.')
+            return redirect('employees:list')
+        emp.employee_code = submitted_code
+
+    date_hired = d.get('date_hired', '').strip()
+    if date_hired:
+        emp.date_hired = date_hired
+
+    emp.employment_type = d.get('employment_type', emp.employment_type)
+    emp.status          = d.get('status',          emp.status)
+
+    dept_id  = d.get('department_id',  '').strip()
+    pos_id   = d.get('position_id',    '').strip()
+    grade_id = d.get('salary_grade_id','').strip()
+
+    if dept_id:  emp.department_id   = dept_id
+    if pos_id:   emp.position_id     = pos_id
+    if grade_id: emp.salary_grade_id = grade_id
+
+    for field in [
+        'middle_name', 'gender', 'civil_status', 'nationality',
+        'tin_number', 'sss_number', 'philhealth_number', 'pagibig_number',
+        'emergency_contact_name', 'emergency_contact_phone',
+        'emergency_contact_relationship',
+    ]:
+        val = d.get(field, '').strip()
+        if val != '':
+            setattr(emp, field, val)
+
+    for date_field in ['birthdate', 'contract_start', 'contract_end']:
+        val = d.get(date_field, '').strip()
+        if val:
+            setattr(emp, date_field, val)
+
+    emp.updated_at = timezone.now()
+    emp.save()
+
+    role_id = d.get('role_id', '').strip()
+    try:
+        sys_user = emp.systemuser
+        if role_id:
+            sys_user.role = Role.objects.get(pk=int(role_id))
+        else:
+            sys_user.role = None
+        sys_user.save()
+        
+        try:
+            auth = AuthUser.objects.get(username=sys_user.username)
+            auth.is_staff = (sys_user.role and sys_user.role.name == 'SuperAdmin')
+            auth.save()
+        except AuthUser.DoesNotExist:
+            pass
+    except Exception:
+        if role_id:
+            auto_username = generate_username(emp.first_name, emp.last_name)
+            pwd  = generate_temp_password()
+            role = Role.objects.get(pk=int(role_id))
+            auth = AuthUser.objects.create_user(
+                username   = auto_username,
+                password   = pwd,
+                first_name = emp.first_name,
+                last_name  = emp.last_name,
+                email      = emp.email,
+                is_active  = True,
+                is_staff   = (role.name == 'SuperAdmin'),
+            )
+            SystemUser.objects.create(
+                username      = auto_username,
+                password_hash = auth.password,
+                employee      = emp,
+                role          = role,
+                is_active     = True,
+            )
+            messages.info(request, f'System account "{auto_username}" created with role {role.name}.')
+
+    AuditLog.objects.create(
+        user       = request.user,
+        action     = 'UPDATE',
+        table_name = 'employees_employee',
+        record_id  = emp.id,
+        old_value  = old,
+        new_value  = _emp_to_dict(emp),
+        timestamp  = timezone.now(),
+    )
+
+    messages.success(request, f'Employee {emp.first_name} {emp.last_name} updated successfully.')
+    return redirect('employees:list')
+
+
+@admin_required
 @require_POST
 def employee_delete(request, pk):
     """Soft-delete: sets status=inactive to preserve payroll history."""
@@ -419,15 +402,11 @@ def employee_get_json(request, pk):
     return JsonResponse(_emp_to_dict(emp))
 
 
-@login_required
+@admin_required
 @require_GET
 def positions_by_department(request):
-    """
-    AJAX: Returns positions filtered by dept_id.
-    Now includes base_salary and employee count so the modal
-    can display salary info when a position is selected.
-    """
-    dept_id   = request.GET.get('dept_id')
+    """AJAX: Returns positions filtered by dept_id."""
+    dept_id = request.GET.get('dept_id')
     if not dept_id:
         return JsonResponse({'positions': []})
 
@@ -444,7 +423,7 @@ def positions_by_department(request):
 def export_employees(request):
     """CSV export of all active employees."""
     response = HttpResponse(content_type='text/csv')
-    response['Content-Disposition'] = 'attachment; filename="employees.csv"'
+    response['Content-Disposition'] = 'attachment; filename=\"employees.csv\"'
     writer = csv.writer(response)
     writer.writerow([
         'Code', 'First Name', 'Last Name', 'Email', 'Phone',
@@ -466,17 +445,12 @@ def export_employees(request):
 
 # ── Department & Position CRUD ────────────────────────────────────────────────
 
-@login_required
+@admin_required
 def departments_view(request):
-    """
-    Full CRUD for Departments and their Positions.
-    POST actions: create, update, delete (dept)
-                  create_position, update_position, delete_position
-    """
+    """Full CRUD for Departments and their Positions."""
     if request.method == 'POST':
         action = request.POST.get('action', 'create')
 
-        # ── Department CRUD ───────────────────────────────────────────────
         if action == 'create':
             Department.objects.create(
                 name=request.POST.get('name', '').strip(),
@@ -493,12 +467,10 @@ def departments_view(request):
 
         elif action == 'delete':
             dept = get_object_or_404(Department, pk=request.POST.get('dept_id'))
-            # Detach employees before deleting
             Employee.objects.filter(department=dept).update(department=None)
             dept.delete()
             messages.warning(request, 'Department deleted. Affected employees have no department.')
 
-        # ── Position CRUD ─────────────────────────────────────────────────
         elif action == 'create_position':
             dept_id = request.POST.get('dept_id')
             name    = request.POST.get('pos_name', '').strip()
@@ -517,7 +489,6 @@ def departments_view(request):
             pos  = get_object_or_404(Position, pk=request.POST.get('pos_id'))
             pos.name        = request.POST.get('pos_name', pos.name).strip()
             pos.base_salary = request.POST.get('base_salary', pos.base_salary) or 0
-            # Allow moving position to a different department
             new_dept = request.POST.get('dept_id')
             if new_dept:
                 pos.department_id = new_dept
@@ -527,21 +498,18 @@ def departments_view(request):
         elif action == 'delete_position':
             pos  = get_object_or_404(Position, pk=request.POST.get('pos_id'))
             name = pos.name
-            # Detach employees before deleting
             Employee.objects.filter(position=pos).update(position=None)
             pos.delete()
             messages.warning(request, f'Position "{name}" deleted.')
 
         return redirect('employees:departments')
 
-    # ── GET: annotate each department with counts and positions ───────────
     departments = Department.objects.annotate(
         emp_count      = Count('employee', distinct=True),
         position_count = Count('position', distinct=True),
     ).prefetch_related('position_set').order_by('name')
 
     for dept in departments:
-        # Attach positions with their employee counts
         dept.positions_detail = dept.position_set.annotate(
             emp_count=Count('employee')
         ).order_by('name')
@@ -550,7 +518,7 @@ def departments_view(request):
         'departments': departments,
         **_branding(),
     })
-    
+
 
 @admin_required
 def positions_view(request):
@@ -597,9 +565,20 @@ def update_grade(request, pk):
         sg.name          = request.POST.get('name', sg.name).strip()
         sg.hourly_rate   = request.POST.get('hourly_rate', sg.hourly_rate)
         sg.overtime_rate = request.POST.get('overtime_rate', sg.overtime_rate)
-        sg.save()  # base_salary auto-recomputed in save()
+        sg.save()
         messages.success(request, f'Salary grade "{sg.name}" updated.')
     return redirect('payroll:components')
+
+
+@admin_required
+@require_POST
+def delete_grade(request, pk):
+    sg = get_object_or_404(SalaryGrade, pk=pk)
+    name = sg.name
+    Employee.objects.filter(salary_grade=sg).update(salary_grade=None)
+    sg.delete()
+    messages.warning(request, f'Salary grade "{name}" deleted. Affected employees have no grade.')
+    return redirect('employees:salary_grades')
 
 
 @admin_required
@@ -609,9 +588,9 @@ def get_grade(request, pk):
     return JsonResponse({
         'id':            sg.id,
         'name':          sg.name,
-        'hourly_rate':   f"{sg.hourly_rate:.2f}",   # Formats '100.0000' -> '100.00'
-        'overtime_rate': f"{sg.overtime_rate:.2f}", # Formats cleanly to 2 decimal places
-        'base_salary':   f"{sg.base_salary:.2f}",   # Formats cleanly to 2 decimal places
+        'hourly_rate':   f"{sg.hourly_rate:.2f}",
+        'overtime_rate': f"{sg.overtime_rate:.2f}",
+        'base_salary':   f"{sg.base_salary:.2f}",
     })
 
 
@@ -657,85 +636,11 @@ def company_settings(request):
     })
 
 
-# ── Roles & Permissions (Full CRUD Integration) ───────────────────────────────
+# ── User Management ───────────────────────────────────────────────────────────
 
-@login_required
-def roles_view(request):
-    """Full CRUD for Roles and Permissions via POST action field."""
-    if request.method == 'POST':
-        action = request.POST.get('action', '')
-
-        if action == 'create':
-            Role.objects.create(
-                name=request.POST.get('name', '').strip(),
-                description=request.POST.get('description', '').strip(),
-            )
-            messages.success(request, 'Role created.')
-
-        elif action == 'update':
-            role = get_object_or_404(Role, pk=request.POST.get('role_id'))
-            role.name        = request.POST.get('name', role.name).strip()
-            role.description = request.POST.get('description', role.description).strip()
-            role.save()
-            messages.success(request, f'Role "{role.name}" updated.')
-
-        elif action == 'delete':
-            role = get_object_or_404(Role, pk=request.POST.get('role_id'))
-            if role.name in ('SuperAdmin', 'HRAdmin', 'StaffAdmin'):
-                messages.error(request, f'Default role "{role.name}" cannot be deleted.')
-            else:
-                role.delete()
-                messages.warning(request, 'Role deleted.')
-
-        elif action == 'assign_permissions':
-            role     = get_object_or_404(Role, pk=request.POST.get('role_id'))
-            perm_ids = request.POST.getlist('permission_ids')
-            RolePermission.objects.filter(role=role).delete()
-            for pid in perm_ids:
-                RolePermission.objects.create(role=role, permission_id=int(pid))
-            messages.success(request, f'Permissions updated for "{role.name}".')
-
-        elif action == 'create_permission':
-            name = request.POST.get('perm_name', '').strip()
-            code = request.POST.get('perm_code', '').strip()
-            if Permission.objects.filter(code=code).exists():
-                messages.error(request, f'Permission code "{code}" already exists.')
-            else:
-                Permission.objects.create(name=name, code=code)
-                messages.success(request, 'Permission created.')
-
-        elif action == 'update_permission':
-            perm      = get_object_or_404(Permission, pk=request.POST.get('permission_id'))
-            perm.name = request.POST.get('perm_name', perm.name).strip()
-            perm.code = request.POST.get('perm_code', perm.code).strip()
-            perm.save()
-            messages.success(request, 'Permission updated.')
-
-        elif action == 'delete_permission':
-            perm = get_object_or_404(Permission, pk=request.POST.get('permission_id'))
-            perm.delete()
-            messages.warning(request, 'Permission deleted.')
-
-        return redirect('employees:roles')
-
-    # Build role→permission map for JS pre-check
-    role_permission_json = {}
-    for rp in RolePermission.objects.select_related('permission'):
-        role_permission_json.setdefault(rp.role_id, []).append(rp.permission_id)
-
-    return render(request, 'hrms/roles.html', {
-        'roles':                Role.objects.prefetch_related('rolepermission_set__permission'),
-        'permissions':          Permission.objects.all(),
-        'role_permission_json': json.dumps(role_permission_json),
-        **_branding(),
-    })
-
-
-@login_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 def users_view(request):
     """System user account management — full CRUD via POST action field."""
-    from django.contrib.auth.models import User as AuthUser
-
     if request.method == 'POST':
         action = request.POST.get('action', 'create')
 
@@ -746,11 +651,9 @@ def users_view(request):
             role_id   = request.POST.get('role_id')
             is_active = request.POST.get('is_active', 'true') == 'true'
 
-            # ── Check for duplicate username before creation ─────────────────
             if AuthUser.objects.filter(username=username).exists():
                 messages.error(request, f'Username "{username}" is already taken.')
                 return redirect('employees:users')
-            # ──────────────────────────────────────────────────────────────────
 
             auth = AuthUser.objects.create_user(
                 username   = username,
@@ -793,7 +696,6 @@ def users_view(request):
             sys_user.save()
 
             try:
-                from django.contrib.auth.models import User as AuthUser
                 auth = AuthUser.objects.get(username=sys_user.username)
                 auth.is_active = sys_user.is_active
                 auth.is_staff = (sys_user.role and sys_user.role.name == 'SuperAdmin')
@@ -860,7 +762,122 @@ def users_view(request):
         **_branding(),
     })
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
+@require_POST
+def update_employee_role(request, pk):
+    """Changes the role of the SystemUser linked to this employee."""
+    emp = get_object_or_404(Employee, pk=pk)
+
+    try:
+        sys_user = emp.systemuser
+    except Exception:
+        messages.error(request, 'This employee has no system account.')
+        return redirect('employees:detail', pk=pk)
+
+    old_role = sys_user.role.name if sys_user.role else 'None'
+    role_id  = request.POST.get('role_id', '').strip()
+
+    if role_id:
+        if not is_super_admin(request.user) and int(role_id) == Role.objects.get(name='SuperAdmin').pk:
+            messages.error(request, 'Only a Super Admin can grant Super Admin access.')
+            return redirect('employees:detail', pk=pk)
+        try:
+            sys_user.role = Role.objects.get(pk=int(role_id))
+        except Role.DoesNotExist:
+            messages.error(request, 'Invalid role.')
+            return redirect('employees:detail', pk=pk)
+    else:
+        sys_user.role = None
+    sys_user.save()
+
+    try:
+        auth = AuthUser.objects.get(username=sys_user.username)
+        auth.is_staff = (sys_user.role and sys_user.role.name == 'SuperAdmin')
+        auth.save()
+    except AuthUser.DoesNotExist:
+        pass
+
+    new_role = sys_user.role.name if sys_user.role else 'None'
+    AuditLog.objects.create(
+        user=request.user, action='ROLE_CHANGE',
+        table_name='employees_systemuser', record_id=sys_user.id,
+        old_value={'role': old_role},
+        new_value={'role': new_role, 'employee': emp.employee_code},
+        timestamp=timezone.now(),
+    )
+    messages.success(
+        request,
+        f'Role for {emp.first_name} {emp.last_name} updated to {role_display_name(new_role)}.'
+    )
+    return redirect('employees:detail', pk=pk)
+
+
+# ── Leave Quota Configuration ─────────────────────────────────────────────────
+
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
+def leave_types_view(request):
+    """Admin page to define and edit starting leave balances."""
+    if request.method == 'POST':
+        action = request.POST.get('action', 'create')
+
+        if action == 'create':
+            LeaveType.objects.create(
+                name=request.POST.get('name', '').strip(),
+                is_paid=request.POST.get('is_paid', 'true') == 'true',
+                max_days=int(request.POST.get('max_days', 0) or 0),
+            )
+            messages.success(request, 'Leave type created.')
+
+        elif action == 'update':
+            lt = get_object_or_404(LeaveType, pk=request.POST.get('leave_type_id'))
+            lt.name     = request.POST.get('name', lt.name).strip()
+            lt.is_paid  = request.POST.get('is_paid', 'true') == 'true'
+            lt.max_days = int(request.POST.get('max_days', lt.max_days) or lt.max_days)
+            lt.save()
+            messages.success(request, f'"{lt.name}" updated.')
+
+        elif action == 'delete':
+            lt   = get_object_or_404(LeaveType, pk=request.POST.get('leave_type_id'))
+            name = lt.name
+            if LeaveBalance.objects.filter(leave_type=lt).exists():
+                messages.error(
+                    request,
+                    f'"{name}" has existing employee balances and cannot be deleted. '
+                    f'Set max_days to 0 instead if you want to retire it.'
+                )
+            else:
+                lt.delete()
+                messages.warning(request, f'"{name}" deleted.')
+
+        return redirect('employees:leave_types')
+
+    leave_types = LeaveType.objects.annotate(
+        employees_tracked=Count('leavebalance')
+    ).order_by('name')
+
+    return render(request, 'hrms/leave_types.html', {
+        'leave_types': leave_types,
+        **_branding(),
+    })
+
+
+# ── Utility Handlers & Helpers ────────────────────────────────────────────────
+
+@admin_required 
+@require_GET
+def next_employee_code(request):
+    """AJAX: Returns the next available employee code. Used by the add modal."""
+    return JsonResponse({'code': generate_employee_code()})
+
+
+@admin_required 
+@require_POST
+def clear_credentials_session(request):
+    """AJAX: Clears new_employee_credentials from session after popup shows."""
+    request.session.pop('new_employee_credentials', None)
+    return JsonResponse({'ok': True})
+
 
 def _emp_to_dict(emp):
     role_id = None
@@ -903,9 +920,9 @@ def _emp_to_dict(emp):
 
 
 def _auto_password():
-    import random, string
     chars = string.ascii_letters + string.digits
     return ''.join(random.choices(chars, k=12))
+
 
 def _branding():
     try:
@@ -923,88 +940,3 @@ def _branding():
         'company_initials': 'HR',
         'company_logo':     '',
     }
-
-
-@admin_required 
-@require_POST
-def delete_grade(request, pk):
-    sg = get_object_or_404(SalaryGrade, pk=pk)
-    name = sg.name
-    Employee.objects.filter(salary_grade=sg).update(salary_grade=None)
-    sg.delete()
-    messages.warning(request, f'Salary grade "{name}" deleted. Affected employees have no grade.')
-    return redirect('employees:salary_grades')
-    
-
-@admin_required 
-@require_GET
-def next_employee_code(request):
-    """AJAX: Returns the next available employee code. Used by the add modal."""
-    return JsonResponse({'code': generate_employee_code()})
-    
-@admin_required 
-@require_POST
-def clear_credentials_session(request):
-    """AJAX: Clears new_employee_credentials from session after popup shows."""
-    request.session.pop('new_employee_credentials', None)
-    return JsonResponse({'ok': True})
-
-
-# ── Role Management Endpoint ──────────────────────────────────────────────────
-
-@login_required
-@require_POST
-def update_employee_role(request, pk):
-    """
-    Changes the role of the SystemUser linked to this employee.
-    Only SuperAdmins can change roles (enforced server-side).
-    URL: /employees/<pk>/update-role/
-    """
-    from accounts.access import is_super_admin
-    if not is_super_admin(request.user):
-        messages.error(request, 'Only SuperAdmins can change user roles.')
-        return redirect('employees:detail', pk=pk)
-
-    emp = get_object_or_404(Employee, pk=pk)
-
-    try:
-        sys_user = emp.systemuser
-    except Exception:
-        messages.error(request, 'This employee has no system account.')
-        return redirect('employees:detail', pk=pk)
-
-    old_role = sys_user.role.name if sys_user.role else 'None'
-    role_id  = request.POST.get('role_id', '').strip()
-
-    if role_id:
-        try:
-            sys_user.role = Role.objects.get(pk=int(role_id))
-        except Role.DoesNotExist:
-            messages.error(request, 'Invalid role.')
-            return redirect('employees:detail', pk=pk)
-    else:
-        sys_user.role = None
-    sys_user.save()
-
-    # Sync Django staff flag
-    try:
-        from django.contrib.auth.models import User as AuthUser
-        auth = AuthUser.objects.get(username=sys_user.username)
-        auth.is_staff = (sys_user.role and sys_user.role.name == 'SuperAdmin')
-        auth.save()
-    except AuthUser.DoesNotExist:
-        pass
-
-    new_role = sys_user.role.name if sys_user.role else 'None'
-    AuditLog.objects.create(
-        user=request.user, action='ROLE_CHANGE',
-        table_name='employees_systemuser', record_id=sys_user.id,
-        old_value={'role': old_role},
-        new_value={'role': new_role, 'employee': emp.employee_code},
-        timestamp=timezone.now(),
-    )
-    messages.success(
-        request,
-        f'Role for {emp.first_name} {emp.last_name} updated to {new_role}.'
-    )
-    return redirect('employees:detail', pk=pk)

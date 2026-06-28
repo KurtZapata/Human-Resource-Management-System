@@ -66,10 +66,6 @@ urlpatterns = [
     path('users/',
          views.users_view,              name='users'),
 
-    # ── Roles & Permissions ───────────────────────────────────────────────────
-    path('roles/',
-         views.roles_view,              name='roles'),
-
     # ── Company Settings ──────────────────────────────────────────────────────
     path('settings/',
          views.company_settings,        name='company_settings'),
@@ -79,4 +75,6 @@ urlpatterns = [
 
     path('<int:pk>/update-role/',
          views.update_employee_role, name='update_employee_role'),
+
+     path('leave-types/', views.leave_types_view, name='leave_types'),
 ]

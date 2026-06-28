@@ -1,0 +1,152 @@
+{% extends "hrms/admin_base.html" %}
+{% load static %}
+
+{% block title %}Leave Types{% endblock %}
+{% block page_title %}Leave Types{% endblock %}
+{% block breadcrumb %}HR Management › Leave Types{% endblock %}
+
+{% block header_actions %}
+  <button class="btn btn-gold btn-sm" onclick="openModal('add-leave-type-modal')">+ Add Leave Type</button>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+  .lt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap: 1rem; }
+  .lt-card {
+    background: var(--white); border: 1.5px solid var(--gray-200);
+    border-radius: var(--radius-lg); padding: 1.25rem 1.4rem;
+    box-shadow: var(--shadow-sm); transition: all .2s;
+  }
+  .lt-card:hover { border-color: var(--blue-500); box-shadow: var(--shadow-md); }
+  .lt-card-header { display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:.85rem; }
+  .lt-name { font-size: 1rem; font-weight: 800; color: var(--gray-900); }
+  .lt-quota { font-size: 1.8rem; font-weight: 900; color: var(--blue-800); }
+  .lt-quota span { font-size: .78rem; font-weight: 500; color: var(--gray-400); }
+  .lt-meta { display:flex; gap:.5rem; margin-top:.6rem; flex-wrap:wrap; }
+  .lt-actions { display:flex; gap:.4rem; margin-top:1rem; padding-top:.85rem; border-top:1px dashed var(--gray-200); }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div style="background:var(--blue-50);border:1px solid var(--blue-100);border-radius:var(--radius-md);
+            padding:.85rem 1.1rem;margin-bottom:1.25rem;font-size:.85rem;color:var(--blue-800);">
+  💡 <strong>max_days</strong> here is the predefined leave quota every employee starts with for that
+  leave type. Editing it does not retroactively change anyone who already has a balance — only new
+  balances (the first time an employee files that leave type) start at the updated quota.
+</div>
+
+<div class="lt-grid">
+  {% for lt in leave_types %}
+  <div class="lt-card">
+    <div class="lt-card-header">
+      <div class="lt-name">{{ lt.name }}</div>
+      <span class="badge {% if lt.is_paid %}badge-success{% else %}badge-danger{% endif %}">
+        {% if lt.is_paid %}Paid{% else %}Unpaid{% endif %}
+      </span>
+    </div>
+    <div class="lt-quota">{{ lt.max_days }} <span>days / year</span></div>
+    <div class="lt-meta">
+      <span class="badge badge-blue">{{ lt.employees_tracked }} employee{{ lt.employees_tracked|pluralize }} tracked</span>
+    </div>
+    <div class="lt-actions">
+      <button class="btn btn-primary btn-sm" style="flex:1;"
+              onclick="editLeaveType({{ lt.id }}, '{{ lt.name|escapejs }}', {{ lt.is_paid|lower }}, {{ lt.max_days }})">
+        ✏ Edit
+      </button>
+      <button class="btn btn-danger btn-sm" onclick="deleteLeaveType({{ lt.id }}, '{{ lt.name|escapejs }}', {{ lt.employees_tracked }})">
+        🗑
+      </button>
+    </div>
+  </div>
+  {% empty %}
+  <div style="grid-column:1/-1;text-align:center;padding:3rem;color:var(--gray-400);">
+    No leave types defined yet. Add your first one (e.g. Vacation Leave, Sick Leave).
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Add/Edit Modal -->
+<div class="modal-backdrop" id="add-leave-type-modal">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <h2 id="lt-modal-title">Add Leave Type</h2>
+      <button class="btn-close" onclick="closeModal('add-leave-type-modal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <form id="lt-form" method="post" action="{% url 'employees:leave_types' %}">
+        {% csrf_token %}
+        <input type="hidden" name="action" id="lt-action" value="create">
+        <input type="hidden" name="leave_type_id" id="lt-id-input">
+
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Leave Type Name <span style="color:var(--danger)">*</span></label>
+          <input type="text" name="name" id="lt-name" class="form-control"
+                 placeholder="e.g. Vacation Leave, Sick Leave, Bereavement Leave" required>
+        </div>
+
+        <div class="form-group" style="margin-bottom:.9rem;">
+          <label class="form-label">Predefined Quota (days/year) <span style="color:var(--danger)">*</span></label>
+          <input type="number" name="max_days" id="lt-max-days" class="form-control"
+                 min="0" placeholder="e.g. 15" required>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label">Pay Status</label>
+          <select name="is_paid" id="lt-is-paid" class="form-control">
+            <option value="true">Paid</option>
+            <option value="false">Unpaid</option>
+          </select>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('add-leave-type-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="document.getElementById('lt-form').submit()">💾 Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Delete Confirm -->
+<div class="modal-backdrop" id="del-lt-modal">
+  <div class="modal" style="max-width:380px;">
+    <div class="modal-header"><h2>Delete Leave Type</h2><button class="btn-close" onclick="closeModal('del-lt-modal')">✕</button></div>
+    <div class="modal-body" style="text-align:center;padding:2rem;">
+      <div style="font-size:3rem;margin-bottom:.75rem;">⚠️</div>
+      <p>Delete <strong id="del-lt-name"></strong>?</p>
+      <p class="text-sm text-gray mt-2" id="del-lt-warning"></p>
+    </div>
+    <div class="modal-footer" style="justify-content:center;gap:.75rem;">
+      <button class="btn btn-outline" onclick="closeModal('del-lt-modal')">Cancel</button>
+      <button class="btn btn-danger" id="confirm-del-lt">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  function editLeaveType(id, name, isPaid, maxDays) {
+    document.getElementById('lt-modal-title').textContent = 'Edit Leave Type';
+    document.getElementById('lt-action').value   = 'update';
+    document.getElementById('lt-id-input').value = id;
+    document.getElementById('lt-name').value     = name;
+    document.getElementById('lt-is-paid').value  = isPaid ? 'true' : 'false';
+    document.getElementById('lt-max-days').value = maxDays;
+    openModal('add-leave-type-modal');
+  }
+
+  function deleteLeaveType(id, name, employeesTracked) {
+    document.getElementById('del-lt-name').textContent = name;
+    document.getElementById('del-lt-warning').textContent =
+      employeesTracked > 0
+        ? `⚠ ${employeesTracked} employee(s) have a balance for this leave type — delete will be blocked.`
+        : '';
+    document.getElementById('confirm-del-lt').onclick = () => {
+      const f = document.createElement('form');
+      f.method = 'post'; f.action = "{% url 'employees:leave_types' %}";
+      f.innerHTML = `{% csrf_token %}<input name="action" value="delete"><input name="leave_type_id" value="${id}">`;
+      document.body.appendChild(f); f.submit();
+    };
+    openModal('del-lt-modal');
+  }
+</script>
+{% endblock %}

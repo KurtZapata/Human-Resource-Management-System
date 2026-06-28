@@ -35,4 +35,5 @@ urlpatterns = [
     path('report/confirm/',                 views_report.confirm_payroll,     name='confirm_payroll'),
     path('report/<int:pk>/payslip-json/',   views_report.payslip_json,        name='payslip_json'),
     path('report/export/',                  views_report.export_payroll,      name='export_payroll'),
+    path('adjustments/leave-balance/', views.get_employee_leave_balance, name='get_leave_balance'),
 ]

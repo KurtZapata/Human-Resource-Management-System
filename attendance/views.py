@@ -91,6 +91,7 @@ def log_attendance(request):
     otp_code = body.get('otp', '').strip()
 
     # ── Step 1: Resolve employee from session ──────────────────────────────
+    # User state context
     emp_session = request.session.get('timein_employee')
     if not emp_session:
         return JsonResponse({'success': False, 'message': 'Please sign in first.'})
@@ -310,7 +311,7 @@ def attendance_records(request):
         }
 
     paginator = Paginator(qs, 30)
-    records   = paginator.get_page(request.GET.get('page', 1))
+    records = paginator.get_page(request.GET.get('page', 1))
 
     return render(request, 'hrms/attendance_records.html', {
         'records':      records,
@@ -424,7 +425,7 @@ def update_attendance(request, pk):
     return redirect('attendance:records')
 
 
-@login_required
+@admin_required
 def manual_entry(request):
     """POST: Admin creates a new attendance record manually."""
     if request.method != 'POST':
@@ -453,7 +454,7 @@ def manual_entry(request):
     return redirect('attendance:dashboard')
 
 
-@login_required
+@admin_required
 @require_GET
 def employee_stats(request):
     """
@@ -729,7 +730,7 @@ def otp_manager(request):
     })
     
 
-@login_required
+@admin_required
 @require_GET
 def otp_list_json(request):
     from django.utils import timezone as tz
@@ -828,8 +829,10 @@ def employee_login(request):
     return JsonResponse({'success': True, 'employee': session_data})
     
 
-@require_POST
 def employee_logout(request):
+    if request.method != 'POST':
+        return JsonResponse({'success': False, 'message': 'POST required.'}, status=405)
+        
     emp_session = request.session.pop('timein_employee', None)
     if emp_session:
         try:
@@ -846,7 +849,7 @@ def employee_logout(request):
     return JsonResponse({'success': True})
 
 
-@login_required
+@admin_required
 @require_GET
 def otp_stats_json(request):
     from django.utils import timezone as tz
@@ -906,6 +909,7 @@ def _recompute_payroll_for_attendance(att):
         )
         
 
+@admin_required
 @require_POST
 def grant_overtime(request):
     try:

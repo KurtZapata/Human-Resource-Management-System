@@ -26,6 +26,8 @@
   }
   .type-pill.overtime { background: #FEF3C7; color: #B45309; }
   .type-pill.leave    { background: #F3E8FF; color: #7E22CE; }
+  /* Add to the existing .type-pill CSS rules */
+  .type-pill.deduction { background: #FEE2E2; color: #B91C1C; }
 
   .emp-cell { display: flex; align-items: center; gap: .6rem; }
   .emp-av-sm {
@@ -53,7 +55,6 @@
 
 {% block content %}
 
-<!-- ── Summary Totals ── -->
 <div class="adj-totals">
   <div class="adj-total-item">
     <span class="label">Total Adjustments</span>
@@ -79,12 +80,20 @@
   </div>
   <div style="width:1px;height:36px;background:var(--gray-200);"></div>
   <div class="adj-total-item">
+    <span class="label">Custom Deductions</span>
+    <span class="val" style="color:#DC2626;">{{ summary.deduction_count }}</span>
+  </div>
+  <div class="adj-total-item">
+    <span class="label">Total Deducted</span>
+    <span class="val" style="color:#DC2626;">₱{{ summary.total_deduction_amount|floatformat:"2" }}</span>
+  </div>
+  <div style="width:1px;height:36px;background:var(--gray-200);"></div>
+  <div class="adj-total-item">
     <span class="label">Net Adjustment Amount</span>
     <span class="val" style="color:var(--blue-800);">₱{{ summary.total_amount|floatformat:"2" }}</span>
   </div>
 </div>
 
-<!-- ── Filters ── -->
 <div class="adj-filter-bar">
   <form method="get" action="{% url 'payroll:adjustments' %}" style="display:contents;">
     <div class="form-group" style="flex:2;min-width:200px;">
@@ -104,6 +113,7 @@
         <option value="">All Types</option>
         <option value="overtime" {% if request.GET.type == 'overtime' %}selected{% endif %}>Overtime</option>
         <option value="leave"    {% if request.GET.type == 'leave' %}selected{% endif %}>Leave</option>
+        <option value="deduction" {% if request.GET.type == 'deduction' %}selected{% endif %}>Custom Deduction</option>
       </select>
     </div>
     <div class="form-group">
@@ -112,7 +122,7 @@
         <option value="">All Periods</option>
         {% for p in payroll_periods %}
         <option value="{{ p.id }}" {% if request.GET.period_id == p.id|stringformat:'s' %}selected{% endif %}>
-          {{ p.start_date|date:"M d" }} – {{ p.end_date|date:"M d, Y" }}
+          {{ p.start_date|date:"M d" }} – {{ p.end_date|date:"M d, Y" }} ({{ p.status|title }})
         </option>
         {% endfor %}
       </select>
@@ -124,7 +134,6 @@
   </form>
 </div>
 
-<!-- ── Adjustments Table ── -->
 <div class="card">
   <div class="card-header">
     <h3>Adjustment Records</h3>
@@ -163,7 +172,9 @@
           </td>
           <td>
             <span class="type-pill {{ adj.type }}">
-              {% if adj.type == 'overtime' %}⏰ Overtime{% else %}🏖 Leave{% endif %}
+              {% if adj.type == 'overtime' %}⏰ Overtime
+              {% elif adj.type == 'leave' %}🏖 Leave
+              {% else %}💸 Deduction{% endif %}
             </span>
           </td>
           <td>
@@ -209,7 +220,6 @@
     </table>
   </div>
 
-  <!-- Pagination -->
   <div style="padding:1rem 1.5rem;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--gray-200);">
     <span class="text-sm text-gray">Page {{ adjustments.number }} of {{ adjustments.paginator.num_pages }}</span>
     <div class="pagination">
@@ -230,7 +240,6 @@
   </div>
 </div>
 
-<!-- ══ ADD / EDIT ADJUSTMENT MODAL ══ -->
 <div class="modal-backdrop" id="add-adj-modal">
   <div class="modal" style="max-width:520px;">
     <div class="modal-header">
@@ -274,14 +283,13 @@
 
           <div class="form-group" style="grid-column:1/-1;">
             <label class="form-label">Type <span style="color:var(--danger)">*</span></label>
-            <select name="type" id="adj-type" class="form-control" required
-                    onchange="onAdjTypeChange()">
+            <select name="type" id="adj-type" class="form-control" required onchange="onAdjTypeChange()">
               <option value="overtime">⏰ Overtime</option>
               <option value="leave">🏖 Leave</option>
+              <option value="deduction">💸 Custom Deduction</option>
             </select>
           </div>
 
-          <!-- Leave Type (visible for leave only) -->
           <div class="form-group" id="leave-type-wrap" style="display:none;grid-column:1/-1;">
             <label class="form-label">Leave Type</label>
             <select name="leave_type_id" id="adj-leave-type" class="form-control">
@@ -294,7 +302,6 @@
             </select>
           </div>
 
-          <!-- Hours (overtime only) -->
           <div class="form-group" id="hours-wrap">
             <label class="form-label" id="hours-label">
               OT Hours <span style="color:var(--danger)">*</span>
@@ -304,7 +311,6 @@
                    oninput="recalcOTAmount()">
           </div>
 
-          <!-- OT Rate display (read-only, auto-loaded from employee) -->
           <div class="form-group" id="ot-rate-wrap">
             <label class="form-label">OT Rate (₱/hr)</label>
             <input type="text" id="adj-ot-rate-display" class="form-control"
@@ -312,7 +318,17 @@
                    placeholder="Auto-loaded from employee grade">
           </div>
 
-          <!-- Amount -->
+          <div class="form-group" id="deduction-wrap" style="display:none;grid-column:1/-1;">
+            <label class="form-label">
+              Deduction Amount (₱) <span style="color:var(--danger)">*</span>
+              <span style="font-size:.72rem;color:var(--gray-400);font-weight:400;">
+                Always subtracted from net pay — e.g. cash advance repayment, damages, uniform cost
+              </span>
+            </label>
+            <input type="number" name="amount" id="adj-deduction-amount" class="form-control"
+                   step="0.01" min="0" placeholder="e.g. 500.00">
+          </div>
+
           <div class="form-group" style="grid-column:1/-1;">
             <label class="form-label" id="amount-label">
               Amount (₱)
@@ -323,7 +339,6 @@
             <input type="number" name="amount" id="adj-amount" class="form-control"
                    step="0.01" placeholder="0.00"
                    id="adj-amount-field">
-            <!-- OT amount is read-only (computed), Leave amount is editable -->
             <div style="font-size:.75rem;margin-top:.35rem;" id="amount-note"></div>
           </div>
 
@@ -338,12 +353,11 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closeModal('add-adj-modal')">Cancel</button>
-      <button class="btn btn-primary" onclick="document.getElementById('adj-form').submit()">💾 Save Adjustment</button>
+      <button class="btn btn-primary" onclick="syncDeductionAmountBeforeSubmit(); document.getElementById('adj-form').submit()">💾 Save Adjustment</button>
     </div>
   </div>
 </div>
 
-<!-- Delete Confirm Modal -->
 <div class="modal-backdrop" id="del-adj-modal">
   <div class="modal" style="max-width:360px;">
     <div class="modal-header"><h2>Delete Adjustment</h2><button class="btn-close" onclick="closeModal('del-adj-modal')">✕</button></div>
@@ -361,39 +375,54 @@
 <script>
   function onAdjTypeChange() {
     const type = document.getElementById('adj-type').value;
-    const isOT = type === 'overtime';
+    const isOT   = type === 'overtime';
+    const isLeave= type === 'leave';
+    const isDed  = type === 'deduction';
 
-    // Toggle sections
-    document.getElementById('leave-type-wrap').style.display = isOT ? 'none' : '';
-    document.getElementById('hours-wrap').style.display      = isOT ? '' : 'none';
-    document.getElementById('ot-rate-wrap').style.display    = isOT ? '' : 'none';
+    document.getElementById('leave-type-wrap').style.display = isLeave ? '' : 'none';
+    document.getElementById('hours-wrap').style.display      = isOT    ? '' : 'none';
+    document.getElementById('ot-rate-wrap').style.display     = isOT    ? '' : 'none';
+    document.getElementById('deduction-wrap').style.display   = isDed   ? '' : 'none';
 
     const amountField = document.getElementById('adj-amount');
-    const amountHint  = document.getElementById('amount-hint');
-    const amountNote  = document.getElementById('amount-note');
+    const amountHint   = document.getElementById('amount-hint');
+    const amountNote    = document.getElementById('amount-note');
+    // The main #adj-amount field is reused for OT (read-only/computed) and
+    // leave (manual, ±). For deduction we use a dedicated #adj-deduction-amount
+    // field instead, so OT/leave behavior below is unchanged.
 
     if (isOT) {
-      // Overtime = auto-computed
       amountField.readOnly = true;
       amountField.style.background = 'var(--gray-50)';
-      amountField.style.color = 'var(--gray-500)';
-
+      amountField.style.color      = 'var(--gray-500)';
+      amountField.style.display    = '';
       amountHint.textContent = '— auto-computed: hours × OT rate';
-      amountNote.innerHTML = '';
-
+      amountNote.innerHTML   = '';
       recalcOTAmount();
-    } else {
-      // Leave = manual input
+    } else if (isLeave) {
       amountField.readOnly = false;
       amountField.style.background = '';
-      amountField.style.color = '';
-
+      amountField.style.color      = '';
+      amountField.style.display    = '';
       amountHint.textContent = '— enter manually';
       amountNote.innerHTML =
-        '<span style="color:var(--blue-700);">' +
-        'Positive (+) = leave pay added to salary. ' +
-        'Negative (−) = salary deduction for unpaid leave.' +
-        '</span>';
+        '<span style="color:var(--blue-700);">Positive (+) = leave pay added to salary. ' +
+        'Negative (−) = deduction from salary (e.g. -800 for unpaid leave).</span>';
+    } else if (isDed) {
+      // Hide the shared amount field entirely; the dedicated deduction field is used instead
+      amountField.style.display = 'none';
+      amountHint.textContent = '';
+      amountNote.innerHTML = '';
+    }
+  }
+
+  // Also update the form submit / editAdj() to copy #adj-deduction-amount
+  // into the submitted 'amount' field when type === 'deduction':
+  function syncDeductionAmountBeforeSubmit() {
+    const type = document.getElementById('adj-type').value;
+    if (type === 'deduction') {
+      document.getElementById('adj-amount').value =
+        document.getElementById('adj-deduction-amount').value;
     }
   }
 
@@ -442,6 +471,7 @@
 
     document.getElementById('adj-hours').value = hours;
     document.getElementById('adj-amount').value = amount;
+    document.getElementById('adj-deduction-amount').value  = amount;   // NEW
     document.getElementById('adj-desc').value = desc;
 
     if (leaveTypeId) {

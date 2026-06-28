@@ -1,13 +1,26 @@
 """
-accounts/access.py
+apps/accounts/access.py  (REPLACES the existing file entirely)
 ═══════════════════════════════════════════════════════════════════════════════
-Role-based access control for the HRMS admin pages.
+Hardcoded 3-tier role-based access control. No Role/Permission CRUD —
+exactly 3 roles always exist (seeded by migration), and what each one can
+reach is defined here as plain Python, not configurable data.
 
-Provides:
-  1. get_user_role()        — fetches role metadata or yields superuser bypasses
-  2. has_admin_role()       — structural checker to see if user matches any admin profile
-  3. admin_required         — view decorator for fine-grained protection
-  4. AdminAccessMiddleware  — blanket middleware that blocks non-admins globally
+THE MATRIX:
+  SuperAdmin   -> everything
+  HRAdmin      -> everything except Company Settings + the system-wide
+                  Audit Log
+  StaffAdmin   -> ("Normal Admin" in the UI) ONLY:
+                    - Employee / Department / Position / Salary Grade CRUD
+                    - View Payroll Report & Payslips (read-only, cannot
+                      run payroll, cannot touch Adjustments/Components/
+                      Periods, cannot confirm payroll)
+                  No access to: Attendance, OTP Manager, Calendar,
+                  Salary Components, Adjustments, Run Payroll, Users,
+                  Company Settings, Audit Log.
+
+NOTE ON NAMING: the DB value stays 'StaffAdmin' (already baked into the
+test suite and migrations) — only the label shown in the UI changes to
+"Normal Admin". See ROLE_DISPLAY_NAMES below.
 ═══════════════════════════════════════════════════════════════════════════════
 """
 
@@ -15,47 +28,52 @@ from functools import wraps
 from django.shortcuts import redirect, render
 from django.contrib.auth.decorators import login_required
 
-# ── Roles considered "admin" ──────────────────────────────────────────────────
-ADMIN_ROLES = {'SuperAdmin', 'HRAdmin', 'StaffAdmin'}
+# ── The exact 3 roles that may ever exist ─────────────────────────────────────
+SUPERADMIN = 'SuperAdmin'
+HRADMIN    = 'HRAdmin'
+STAFFADMIN = 'StaffAdmin'   # shown to users as "Normal Admin"
 
-# ── URLs that are always public (no login or role check required) ─────────────
-PUBLIC_PATHS = {
-    '/login/',
-    '/accounts/login/',
-    '/attendance/',
-    '/attendance/log/',
-    '/attendance/employee-login/',
-    '/attendance/employee-logout/',
+ADMIN_ROLES = {SUPERADMIN, HRADMIN, STAFFADMIN}
+
+# UI label override — use this anywhere a role name is displayed to a person
+ROLE_DISPLAY_NAMES = {
+    SUPERADMIN: 'Super Admin',
+    HRADMIN:    'HR Admin',
+    STAFFADMIN: 'Normal Admin',
 }
 
-# Paths that start with these prefixes bypass admin checks automatically
-PUBLIC_PREFIXES = (
-    '/static/',
-    '/media/',
-    '/admin/',      # Django's built-in core admin (protected natively)
-)
+
+def role_display_name(role):
+    """Returns the human-facing label for a Role instance or role name string."""
+    name = role.name if hasattr(role, 'name') else role
+    return ROLE_DISPLAY_NAMES.get(name, name or 'No Role')
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  1. ROLE HELPERS
-# ═══════════════════════════════════════════════════════════════════════════════
+# ── Public paths — never require login or a role ──────────────────────────────
+PUBLIC_PATHS = {
+    '/login/', '/accounts/login/',
+    '/attendance/', '/attendance/log/',
+    '/attendance/employee-login/', '/attendance/employee-logout/',
+}
+PUBLIC_PREFIXES = ('/static/', '/media/', '/admin/')
+
 
 class _MockRole:
-    """Lightweight stand-in so native superusers don't need an explicit SystemUser record."""
+    """Lets a Django superuser pass every check without needing a SystemUser row."""
     def __init__(self, name):
         self.name = name
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  Role lookup
+# ═══════════════════════════════════════════════════════════════════════════════
+
 def get_user_role(user):
-    """
-    Returns the Role object linked to this Django user via SystemUser,
-    or None if no role is explicitly assigned.
-    """
+    """Returns the Role linked to this Django user via SystemUser, or None."""
     if not user or not user.is_authenticated:
         return None
-    # Django superusers always bypass and inherit SuperAdmin privileges
     if user.is_superuser:
-        return _MockRole('SuperAdmin')
+        return _MockRole(SUPERADMIN)
     try:
         from employees.models import SystemUser
         su = SystemUser.objects.select_related('role').get(
@@ -67,45 +85,44 @@ def get_user_role(user):
 
 
 def has_admin_role(user):
-    """Returns True if the user matches any configuration within ADMIN_ROLES."""
+    """True for any of the 3 admin roles (the broadest check)."""
     role = get_user_role(user)
     return role is not None and role.name in ADMIN_ROLES
 
 
 def is_super_admin(user):
-    """Returns True only for explicit SuperAdmins or native superusers."""
     if getattr(user, 'is_superuser', False):
         return True
     role = get_user_role(user)
-    return role is not None and role.name == 'SuperAdmin'
+    return role is not None and role.name == SUPERADMIN
 
 
 def is_hr_admin(user):
-    """Returns True for SuperAdmin and HRAdmin profiles."""
+    """True for SuperAdmin OR HRAdmin — the 'full admin' tier."""
     if getattr(user, 'is_superuser', False):
         return True
     role = get_user_role(user)
-    return role is not None and role.name in {'SuperAdmin', 'HRAdmin'}
+    return role is not None and role.name in {SUPERADMIN, HRADMIN}
+
+
+def is_normal_admin(user):
+    """True ONLY for the restricted StaffAdmin / 'Normal Admin' tier."""
+    role = get_user_role(user)
+    return role is not None and role.name == STAFFADMIN
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  2. DECORATOR
+#  Decorator
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def admin_required(view_func=None, *, roles=None, redirect_url=None):
     """
-    Decorator that requires a user to be logged in and match specific allowed roles.
-    Defaults to matching any role within ADMIN_ROLES.
-
-    Usage:
-        @admin_required
-        def my_view(request): ...
-
-        @admin_required(roles={'SuperAdmin'})
-        def superadmin_only(request): ...
+    @admin_required                              -> any of the 3 roles
+    @admin_required(roles={'SuperAdmin'})        -> SuperAdmin only
+    @admin_required(roles={'SuperAdmin','HRAdmin'}) -> SuperAdmin or HRAdmin
     """
     allowed = set(roles) if roles else ADMIN_ROLES
-    redir = redirect_url or '/attendance/'
+    redir   = redirect_url or '/attendance/'
 
     def decorator(fn):
         @wraps(fn)
@@ -123,23 +140,17 @@ def admin_required(view_func=None, *, roles=None, redirect_url=None):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  3. MIDDLEWARE
+#  Middleware — coarse "are you any kind of admin" gate at the URL-prefix level.
+#  Fine-grained per-role restriction (e.g. StaffAdmin blocked from Attendance)
+#  lives on the individual views via @admin_required(roles={...}) — see the
+#  decorator map in the delivery notes for exactly which view gets which.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class AdminAccessMiddleware:
-    """
-    Blanket URL-level protection for secure admin endpoints.
-    Blocks non-admin users from accessing secure management modules.
 
-    Add to MIDDLEWARE after AuthenticationMiddleware in settings.py.
-    """
     ADMIN_PREFIXES = (
-        '/employees/',
-        '/payroll/',
-        '/attendance/admin/',
-        '/attendance/otp/',
-        '/calendar/',
-        '/accounts/audit-log/',
+        '/employees/', '/payroll/', '/attendance/admin/',
+        '/attendance/otp/', '/calendar/', '/accounts/audit-log/',
     )
 
     def __init__(self, get_response):
@@ -148,13 +159,11 @@ class AdminAccessMiddleware:
     def __call__(self, request):
         path = request.path
 
-        # Allow entry if path matches whitelist configurations exactly
         if path in PUBLIC_PATHS:
             return self.get_response(request)
         if any(path.startswith(p) for p in PUBLIC_PREFIXES):
             return self.get_response(request)
 
-        # Enforce administrative gating over active prefix groupings
         if any(path.startswith(p) for p in self.ADMIN_PREFIXES):
             if not request.user.is_authenticated:
                 return redirect(f'/login/?next={path}')

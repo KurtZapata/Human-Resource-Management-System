@@ -52,6 +52,7 @@ FORMULA_VARIABLES = [
 #  WEBPAGE #6 — Configurable Salary Page
 # ═══════════════════════════════════════════════════════════════════════════════
 
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 def salary_components(request):
     # Seed defaults if no components exist yet
     _seed_default_components()
@@ -78,9 +79,9 @@ def salary_components(request):
         })
 
     return render(request, 'hrms/salary_config.html', {
-        'earnings':           earnings,
-        'deductions':         deductions,
-        'salary_grades':      salary_grades,
+        'earnings':         earnings,
+        'deductions':       deductions,
+        'salary_grades':    salary_grades,
         'components_json':    json.dumps(all_comps),
         'formula_variables':  FORMULA_VARIABLES,
         'variables_json':     json.dumps({v['name']: v['description'] for v in FORMULA_VARIABLES}),
@@ -88,7 +89,7 @@ def salary_components(request):
     })
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 @require_POST
 def create_component(request):
     d = request.POST
@@ -118,7 +119,7 @@ def create_component(request):
     return redirect('payroll:components')
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 def update_component(request, pk):
     if request.method != 'POST':
         return redirect('payroll:components')
@@ -146,7 +147,7 @@ def update_component(request, pk):
     return redirect('payroll:components')
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 @require_POST
 def delete_component(request, pk):
     comp = get_object_or_404(PayrollComponent, pk=pk, is_locked=False)
@@ -167,14 +168,14 @@ def delete_component(request, pk):
     return redirect('payroll:components')
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 @require_GET
 def get_component(request, pk):
     comp = get_object_or_404(PayrollComponent, pk=pk)
     return JsonResponse(_comp_to_dict(comp))
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 def reorder_components(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'POST required'}, status=405)
@@ -189,7 +190,7 @@ def reorder_components(request):
     return JsonResponse({'ok': True})
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 def toggle_component(request, *args, **kwargs):
     if request.method != 'POST':
         return JsonResponse({'error': 'POST required'}, status=405)
@@ -211,7 +212,7 @@ def toggle_component(request, *args, **kwargs):
 #  Payroll Period Management
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 def payroll_periods(request):
     if request.method == 'POST':
         start_str = request.POST.get('start_date', '').strip()
@@ -282,7 +283,7 @@ def payroll_periods(request):
     })
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 @require_POST
 def close_period(request, pk):
     """Closes (finalises) a payroll period. Prevents further edits."""
@@ -303,7 +304,7 @@ def close_period(request, pk):
 #  Payroll Run
 # ═══════════════════════════════════════════════════════════════════════════════
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 def run_payroll(request):
     all_periods = PayrollPeriod.objects.order_by('-start_date')
     open_periods = all_periods.filter(status='open')
@@ -401,7 +402,7 @@ def run_payroll(request):
         return redirect('payroll:report')
 
     return render(request, 'hrms/payroll_run.html', {
-        'periods':       all_periods,
+        'periods':        all_periods,
         'employees':        employees,
         'active_employees': employees.count(),
         'component_count':  components.count(),
@@ -460,32 +461,49 @@ def payslips_view(request):
     })
 
 
-@admin_required
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
 def adjustments_view(request):
     from django.db.models import Sum, Count
+    from employees.leave_balance import (
+        adjust_leave_balance, hours_to_days, reconcile_leave_adjustment_balance,
+    )
 
     if request.method == 'POST':
         action = request.POST.get('action', 'create')
 
         if action in ('create', 'update'):
-            emp_id    = request.POST.get('employee_id')
-            period_id = request.POST.get('payroll_period_id')
-            adj_type  = request.POST.get('type', 'overtime')
-            hours     = Decimal(request.POST.get('hours', '0') or '0')
+            emp_id      = request.POST.get('employee_id')
+            period_id   = request.POST.get('payroll_period_id')
+            adj_type    = request.POST.get('type', 'overtime')
+            hours       = Decimal(request.POST.get('hours', '0') or '0')
             description = request.POST.get('description', '').strip()
             leave_type_id = request.POST.get('leave_type_id') or None
 
+            # ── Compute amount based on type ────────────────────────────────
             if adj_type == 'overtime':
                 try:
                     emp  = Employee.objects.select_related('salary_grade').get(pk=emp_id)
                     rate = Decimal(str(emp.salary_grade.overtime_rate)) if emp.salary_grade else Decimal('0')
                 except Employee.DoesNotExist:
                     rate = Decimal('0')
-                amount = (hours * rate).quantize(Decimal('0.01'), ROUND_HALF_UP)
+                amount    = (hours * rate).quantize(Decimal('0.01'), ROUND_HALF_UP)
                 rate_used = rate
-            else:
-                amount = Decimal(request.POST.get('amount', '0') or '0')
+
+            elif adj_type == 'deduction':
+                # NEW: flat custom deduction -- always a positive number,
+                # always subtracted. No hours/rate involved.
+                amount    = abs(Decimal(request.POST.get('amount', '0') or '0'))
                 rate_used = Decimal('0')
+                hours     = Decimal('0')
+                leave_type_id = None  # not applicable
+
+            else:  # leave
+                # Admin manually inputs the amount. Positive = leave pay
+                # added, negative = leave deduction.
+                amount    = Decimal(request.POST.get('amount', '0') or '0')
+                rate_used = Decimal('0')
+
+            emp_obj = Employee.objects.get(pk=emp_id)
 
             if action == 'create':
                 adj = Adjustment.objects.create(
@@ -501,8 +519,17 @@ def adjustments_view(request):
                 )
                 messages.success(request, f'Adjustment created. Amount: ₱{amount:,.2f}')
 
+                # ── NEW: decrement leave balance when filing a leave ────────
+                if adj_type == 'leave' and leave_type_id:
+                    days = hours_to_days(hours) if hours else Decimal('1')
+                    adjust_leave_balance(emp_obj, leave_type_id, days_delta=-days)
+
             elif action == 'update':
                 adj = get_object_or_404(Adjustment, pk=request.POST.get('adj_id'))
+                old_type          = adj.type
+                old_hours         = adj.hours
+                old_leave_type_id = adj.leave_type_id
+
                 adj.employee_id       = emp_id
                 adj.payroll_period_id = period_id
                 adj.type              = adj_type
@@ -514,16 +541,32 @@ def adjustments_view(request):
                 adj.save()
                 messages.success(request, f'Adjustment updated. Amount: ₱{amount:,.2f}')
 
+                # ── NEW: reconcile leave balance in one tested step ─────────
+                # (restores whatever the OLD type/hours consumed, deducts
+                #  the NEW type/hours -- correct even if type changed)
+                reconcile_leave_adjustment_balance(
+                    emp_obj,
+                    old_leave_type_id=old_leave_type_id, old_hours=old_hours,
+                    new_leave_type_id=(leave_type_id if adj_type == 'leave' else None),
+                    new_hours=(hours if adj_type == 'leave' else None),
+                )
+
         elif action == 'delete':
             adj = get_object_or_404(Adjustment, pk=request.POST.get('adj_id'))
+
+            # ── NEW: restore leave balance when a leave adjustment is removed ─
+            if adj.type == 'leave' and adj.leave_type_id:
+                days = hours_to_days(adj.hours) if adj.hours else Decimal('1')
+                adjust_leave_balance(adj.employee, adj.leave_type_id, days_delta=+days)
+
             adj.delete()
             messages.warning(request, 'Adjustment deleted.')
 
         return redirect('payroll:adjustments')
 
+    # ── Filtering ─────────────────────────────────────────────────────────────
     qs = Adjustment.objects.select_related(
-        'employee', 'employee__salary_grade',
-        'payroll_period', 'created_by'
+        'employee', 'employee__salary_grade', 'payroll_period', 'created_by'
     ).order_by('-created_at')
 
     emp_id    = request.GET.get('emp_id')
@@ -544,31 +587,31 @@ def adjustments_view(request):
             adj.computed_amount = Decimal(str(adj.amount))
         adj_list.append(adj)
 
-    ot_qs    = qs.filter(type='overtime')
-    leave_qs = qs.filter(type='leave')
+    ot_qs   = qs.filter(type='overtime')
+    leave_qs= qs.filter(type='leave')
+    ded_qs  = qs.filter(type='deduction')   # NEW
 
     summary = {
-        'overtime_count':   ot_qs.count(),
-        'leave_count':      leave_qs.count(),
-        'total_ot_hours':   float(ot_qs.aggregate(t=Sum('hours'))['t'] or 0),
-        'total_ot_amount':  float(sum(a.computed_amount for a in adj_list if a.type == 'overtime')),
+        'overtime_count':     ot_qs.count(),
+        'leave_count':        leave_qs.count(),
+        'deduction_count':    ded_qs.count(),                                                   # NEW
+        'total_ot_hours':     float(ot_qs.aggregate(t=Sum('hours'))['t'] or 0),
+        'total_ot_amount':    float(sum(a.computed_amount for a in adj_list if a.type == 'overtime')),
         'total_leave_amount': float(sum(a.computed_amount for a in adj_list if a.type == 'leave')),
-        'net_adjustment':   float(sum(
-            a.computed_amount if a.type == 'overtime' else a.computed_amount
-            for a in adj_list
-        )),
+        'total_deduction_amount': float(sum(a.computed_amount for a in adj_list if a.type == 'deduction')),  # NEW
     }
 
+    from django.core.paginator import Paginator
+    from accounts.models import LeaveType
     paginator   = Paginator(adj_list, 25)
     adjustments = paginator.get_page(request.GET.get('page', 1))
 
     return render(request, 'hrms/adjustments.html', {
-        'adjustments':    adjustments,
-        'adj_list_full':  adj_list,
-        'summary':        summary,
-        'employees':      Employee.objects.filter(status='active').order_by('last_name'),
+        'adjustments':     adjustments,
+        'summary':         summary,
+        'employees':       Employee.objects.filter(status='active').order_by('last_name'),
         'payroll_periods': PayrollPeriod.objects.order_by('-start_date'),
-        'leave_types':    LeaveType.objects.all(),
+        'leave_types':     LeaveType.objects.all(),
         **_branding(),
     })
 
@@ -726,7 +769,7 @@ def compute_employee_payroll(employee, period, components, request_user=None):
             'name':         comp.name,
             'operator':     op,
             'amount':       float(amount),
-            'type':         comp.type,
+            'type':         'comp.type',
             'description':  comp.description or comp.name,
         })
 
@@ -917,3 +960,34 @@ def _is_paid_day(check_date):
         return entry.type == 'regular_holiday' and entry.is_paid
     except Exception:
         return False
+    
+
+@admin_required(roles={'SuperAdmin', 'HRAdmin'})
+@require_GET
+def get_employee_leave_balance(request):
+    """
+    AJAX: returns an employee's remaining balance for a specific leave
+    type, so the Adjustments "file leave" form can show
+    "Vacation Leave: 8.0 / 15 days remaining" before HR approves it.
+    Query params: ?employee_id=&leave_type_id=
+    """
+    from employees.models import Employee, LeaveBalance
+    from accounts.models import LeaveType
+
+    emp_id = request.GET.get('employee_id')
+    lt_id  = request.GET.get('leave_type_id')
+    try:
+        emp = Employee.objects.get(pk=emp_id)
+        lt  = LeaveType.objects.get(pk=lt_id)
+    except (Employee.DoesNotExist, LeaveType.DoesNotExist):
+        return JsonResponse({'error': 'Not found'}, status=404)
+
+    bal = LeaveBalance.objects.filter(employee=emp, leave_type=lt).first()
+    remaining = float(bal.remaining_days) if bal else float(lt.max_days)
+
+    return JsonResponse({
+        'leave_type':     lt.name,
+        'max_days':       lt.max_days,
+        'remaining_days': remaining,
+        'is_paid':        lt.is_paid,
+    })

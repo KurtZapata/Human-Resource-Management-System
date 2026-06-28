@@ -91,7 +91,7 @@ def logout_view(request):
     return redirect('accounts:login')
 
 
-@login_required
+@admin_required(roles={'SuperAdmin'})
 def audit_log_view(request):
     import csv as _csv
     from django.db.models import Count
@@ -114,7 +114,7 @@ def audit_log_view(request):
     # CSV export
     if request.GET.get('export') == 'csv':
         response = HttpResponse(content_type='text/csv')
-        response['Content-Disposition'] = 'attachment; filename=\"audit_log.csv\"'
+        response['Content-Disposition'] = 'attachment; filename="audit_log.csv"'
         writer = _csv.writer(response)
         writer.writerow(['Timestamp','User','Action','Table','Record ID','Old Value','New Value'])
         for log in logs:

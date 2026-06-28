@@ -4,10 +4,15 @@ Django project settings for the HRMS system.
 """
 
 import os
+import sys
 from django.contrib.messages import constants as messages_constants
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# CRITICAL: Fixes project-wide bare cross-app imports (e.g., "from employees.models...")
+# by placing the apps/ directory directly onto the Python system path.
+sys.path.insert(0, os.path.join(BASE_DIR, 'apps'))
 
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-this-in-production')
 
@@ -26,7 +31,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
 
-    # HRMS apps
+    # HRMS apps (Using bare names matching sys.path fix)
     'accounts',
     'employees',
     'attendance',
