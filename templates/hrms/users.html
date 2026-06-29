@@ -6,7 +6,7 @@
 {% block breadcrumb %}HR Management › System Users{% endblock %}
 
 {% block header_actions %}
-  <button class="btn btn-gold btn-sm" onclick="openModal('add-user-modal')">+ Add User</button>
+  <button class="btn btn-gold btn-sm" onclick="openAddUserModal()">+ Add User</button>
 {% endblock %}
 
 {% block extra_css %}
@@ -146,8 +146,8 @@
           {{ user.role_id|default:'null' }},
           {{ user.is_active|lower }}
         )">
-   ✏ Edit
-</button>
+        ✏ Edit
+      </button>
       <button class="btn btn-outline btn-sm"
               onclick="resetPassword({{ user.id }}, '{{ user.username|escapejs }}')">
         🔒 Reset Pwd
@@ -167,11 +167,18 @@
   {% endfor %}
 </div>
 
-<div class="modal-body">
+<div class="modal-backdrop" id="add-user-modal">
+  <div class="modal" style="max-width:500px;">
+    <div class="modal-header">
+      <h2 id="user-modal-title">Add System User</h2>
+      <button class="btn-close" onclick="closeModal('add-user-modal')">✕</button>
+    </div>
+    <div class="modal-body">
       <form id="user-form" method="post" action="{% url 'employees:users' %}">
         {% csrf_token %}
         <input type="hidden" name="action"  id="user-action"  value="create">
         <input type="hidden" name="user_id" id="user-id-input">
+        <input type="hidden" id="user-original-role-id">
 
         <div class="form-group" style="margin-bottom:1.1rem;">
           <label class="form-label">
@@ -234,9 +241,14 @@
             </div>
           </div>
         </div>
-
       </form>
     </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeModal('add-user-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="saveUserClicked()">💾 Save User</button>
+    </div>
+  </div>
+</div>
 
 <div class="modal-backdrop" id="reset-pwd-modal">
   <div class="modal" style="max-width:400px;">
@@ -271,6 +283,31 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="confirm-role-modal">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <h2>Confirm Role Change</h2>
+      <button class="btn-close" onclick="closeModal('confirm-role-modal')">✕</button>
+    </div>
+    <div class="modal-body" style="text-align:center;padding:2rem 1.6rem;">
+      <div style="font-size:3rem;margin-bottom:1rem;">🔑</div>
+      <p style="font-size:1rem;color:var(--gray-700);">
+        Update the role for <strong id="role-confirm-username">this user</strong> to:
+      </p>
+      <p style="font-size:1.05rem;font-weight:700;color:var(--blue-800);margin-top:.5rem;">
+        <span id="role-confirm-role-name">—</span>
+      </p>
+      <p class="text-sm text-gray mt-2">
+        This changes what they can access in the system.
+      </p>
+    </div>
+    <div class="modal-footer" style="justify-content:center;gap:1rem;">
+      <button class="btn btn-outline" onclick="closeModal('confirm-role-modal')">Cancel</button>
+      <button class="btn btn-primary" id="confirm-role-submit-btn">✅ Confirm</button>
+    </div>
+  </div>
+</div>
+
 <script>
   function filterUsers() {
     const q      = document.getElementById('user-search').value.toLowerCase();
@@ -288,17 +325,71 @@
     });
   }
 
+  // ── Reset the modal to a clean "Add User" state ─────────────────────────────
+  function openAddUserModal() {
+    document.getElementById('user-modal-title').textContent = 'Add System User';
+    document.getElementById('user-action').value             = 'create';
+    document.getElementById('user-id-input').value           = '';
+    document.getElementById('user-username').value           = '';
+    document.getElementById('user-employee').value           = '';
+    document.getElementById('user-role-select').value        = '';
+    document.getElementById('user-original-role-id').value   = '';   // no "before" state for a new user
+    document.getElementById('user-status').value              = 'true';
+    document.getElementById('user-password').value             = '';
+    document.getElementById('pwd-required').style.display = '';
+    document.getElementById('pwd-hint').textContent = 'Leave blank to auto-generate a password.';
+    openModal('add-user-modal');
+  }
+
+  // ── Open the modal pre-filled for editing an existing user ───────────────────
   function editUser(id, username, empId, roleId, isActive) {
     document.getElementById('user-modal-title').textContent = 'Edit User';
-    document.getElementById('user-action').value            = 'update';
-    document.getElementById('user-id-input').value          = id;
-    document.getElementById('user-username').value          = username;
-    document.getElementById('user-employee').value          = empId    || '';
-    document.getElementById('user-role-select').value       = roleId   || '';
-    document.getElementById('user-status').value            = isActive ? 'true' : 'false';
-    document.getElementById('pwd-required').style.display   = 'none';
-    document.getElementById('pwd-hint').textContent         = 'Leave blank to keep existing password.';
+    document.getElementById('user-action').value             = 'update';
+    document.getElementById('user-id-input').value           = id;
+    document.getElementById('user-username').value           = username;
+    document.getElementById('user-employee').value           = empId    || '';
+    document.getElementById('user-role-select').value        = roleId   || '';
+    document.getElementById('user-original-role-id').value   = roleId   || '';  // remember the "before" state
+    document.getElementById('user-status').value              = isActive ? 'true' : 'false';
+    document.getElementById('user-password').value             = '';
+    document.getElementById('pwd-required').style.display = 'none';
+    document.getElementById('pwd-hint').textContent = 'Leave blank to keep the existing password.';
     openModal('add-user-modal');
+  }
+
+  // ── Save User button: confirm ONLY if the role is actually CHANGING ──────────
+  function saveUserClicked() {
+    const form     = document.getElementById('user-form');
+    const username = document.getElementById('user-username').value.trim();
+
+    if (!username) {
+      if (typeof showToast === "function") showToast('Username is required.', 'error');
+      else alert('Username is required.');
+      return;
+    }
+
+    const roleSelect      = document.getElementById('user-role-select');
+    const newRoleId        = roleSelect.value;
+    const originalRoleId   = document.getElementById('user-original-role-id').value;
+
+    if (newRoleId === originalRoleId) {
+      // Role is unchanged -- submit form straight through
+      form.submit();
+      return;
+    }
+
+    // Role is changing -- request user confirmation via explicit system modal interface
+    const roleLabel = roleSelect.options[roleSelect.selectedIndex].text.trim();
+
+    document.getElementById('role-confirm-username').textContent  = username;
+    document.getElementById('role-confirm-role-name').textContent = roleLabel;
+
+    document.getElementById('confirm-role-submit-btn').onclick = function () {
+      closeModal('confirm-role-modal');
+      form.submit();
+    };
+
+    openModal('confirm-role-modal');
   }
 
   function resetPassword(id, username) {

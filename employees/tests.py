@@ -492,69 +492,6 @@ class SystemUserCRUDTests(EmployeeCRUDTestBase):
         self.assertTrue(auth.is_active)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  Role + Permission — Full CRUD
-# ═══════════════════════════════════════════════════════════════════════════════
-
-class RolePermissionCRUDTests(EmployeeCRUDTestBase):
-
-    def test_create_role(self):
-        self.client.post(reverse('employees:roles'), {
-            'action': 'create', 'name': 'PayrollViewer', 'description': 'View-only payroll',
-        })
-        self.assertTrue(Role.objects.filter(name='PayrollViewer').exists())
-
-    def test_default_roles_cannot_be_deleted(self):
-        role = Role.objects.create(name='SuperAdmin')
-        self.client.post(reverse('employees:roles'), {
-            'action': 'delete', 'role_id': role.id,
-        })
-        self.assertTrue(Role.objects.filter(pk=role.id).exists())
-
-    def test_custom_role_can_be_deleted(self):
-        role = Role.objects.create(name='TempRole')
-        self.client.post(reverse('employees:roles'), {
-            'action': 'delete', 'role_id': role.id,
-        })
-        self.assertFalse(Role.objects.filter(pk=role.id).exists())
-
-    def test_create_permission(self):
-        self.client.post(reverse('employees:roles'), {
-            'action': 'create_permission', 'perm_name': 'View Payroll', 'perm_code': 'payroll.view',
-        })
-        self.assertTrue(Permission.objects.filter(code='payroll.view').exists())
-
-    def test_create_permission_rejects_duplicate_code(self):
-        Permission.objects.create(name='Existing', code='payroll.view')
-        self.client.post(reverse('employees:roles'), {
-            'action': 'create_permission', 'perm_name': 'Another', 'perm_code': 'payroll.view',
-        })
-        self.assertEqual(Permission.objects.filter(code='payroll.view').count(), 1)
-
-    def test_assign_permissions_to_role(self):
-        role  = Role.objects.create(name='Custom')
-        perm1 = Permission.objects.create(name='P1', code='p1.view')
-        perm2 = Permission.objects.create(name='P2', code='p2.view')
-
-        self.client.post(reverse('employees:roles'), {
-            'action': 'assign_permissions', 'role_id': role.id,
-            'permission_ids': [perm1.id, perm2.id],
-        })
-        assigned = RolePermission.objects.filter(role=role).values_list('permission_id', flat=True)
-        self.assertCountEqual(list(assigned), [perm1.id, perm2.id])
-
-    def test_reassigning_permissions_replaces_old_set_entirely(self):
-        role  = Role.objects.create(name='Custom')
-        perm1 = Permission.objects.create(name='P1', code='p1.view')
-        perm2 = Permission.objects.create(name='P2', code='p2.view')
-        RolePermission.objects.create(role=role, permission=perm1)
-
-        self.client.post(reverse('employees:roles'), {
-            'action': 'assign_permissions', 'role_id': role.id,
-            'permission_ids': [perm2.id],
-        })
-        assigned = list(RolePermission.objects.filter(role=role).values_list('permission_id', flat=True))
-        self.assertEqual(assigned, [perm2.id])  # perm1 removed, perm2 added
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

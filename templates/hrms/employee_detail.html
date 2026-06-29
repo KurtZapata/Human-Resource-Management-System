@@ -265,10 +265,11 @@
                 </option>
                 {% endfor %}
               </select>
+              <input type="hidden" id="emp-original-role-id" value="{{ employee.systemuser.role_id|default:'' }}">
             </div>
 
             <div style="display:flex;align-items:center;gap:.65rem;flex-wrap:wrap;">
-              <button type="submit" class="btn btn-primary btn-sm" id="save-role-btn">
+              <button type="button" class="btn btn-primary btn-sm" id="save-role-btn" onclick="confirmRoleSave()">
                 💾 Save Role
               </button>
               <div style="font-size:.75rem;color:var(--gray-400);display:none;" id="role-change-hint">
@@ -286,14 +287,6 @@
             </a>
           </div>
           {% endif %}
-
-          <script>
-            function highlightRoleChange(sel) {
-              document.getElementById('role-change-hint').style.display = 'inline';
-              document.getElementById('save-role-btn').style.background = 'var(--gold-500)';
-              document.getElementById('save-role-btn').style.color      = 'var(--gray-900)';
-            }
-          </script>
         </div>
       </div>
     </div>
@@ -435,6 +428,31 @@
   </div>
 </div>
 
+<div class="modal-backdrop" id="confirm-emp-role-modal">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <h2>Confirm Role Change</h2>
+      <button class="btn-close" onclick="closeModal('confirm-emp-role-modal')">✕</button>
+    </div>
+    <div class="modal-body" style="text-align:center;padding:2rem 1.6rem;">
+      <div style="font-size:3rem;margin-bottom:1rem;">🔑</div>
+      <p style="font-size:1rem;color:var(--gray-700);">
+        Update <strong>{{ employee.first_name }} {{ employee.last_name }}</strong>'s role to:
+      </p>
+      <p style="font-size:1.05rem;font-weight:700;color:var(--blue-800);margin-top:.5rem;">
+        <span id="emp-role-confirm-name">—</span>
+      </p>
+      <p class="text-sm text-gray mt-2">
+        This changes what they can access in the system.
+      </p>
+    </div>
+    <div class="modal-footer" style="justify-content:center;gap:1rem;">
+      <button class="btn btn-outline" onclick="closeModal('confirm-emp-role-modal')">Cancel</button>
+      <button class="btn btn-primary" id="confirm-emp-role-btn">✅ Confirm</button>
+    </div>
+  </div>
+</div>
+
 <script>
   function switchDTab(id, btn) {
     document.querySelectorAll('.dtab-panel').forEach(p => p.classList.remove('active'));
@@ -442,8 +460,42 @@
     document.getElementById(id).classList.add('active');
     btn.classList.add('active');
   }
+  
   function openEditModal() {
     window.location.href = "{% url 'employees:list' %}?edit={{ employee.id }}";
+  }
+
+  function highlightRoleChange(sel) {
+    const changed = sel.value !== document.getElementById('emp-original-role-id').value;
+    document.getElementById('role-change-hint').style.display = changed ? 'inline' : 'none';
+    document.getElementById('save-role-btn').style.background  = changed ? 'var(--gold-500)' : '';
+    document.getElementById('save-role-btn').style.color        = changed ? 'var(--gray-900)' : '';
+  }
+
+  function confirmRoleSave() {
+    const sel            = document.getElementById('emp-role-select');
+    const originalRoleId = document.getElementById('emp-original-role-id').value;
+    const newRoleId      = sel.value;
+    const form           = sel.closest('form');
+
+    if (newRoleId === originalRoleId) {
+      if (typeof showToast === "function") {
+        showToast('Role is unchanged.', 'info');
+      } else {
+        alert('Role is unchanged.');
+      }
+      return;
+    }
+
+    const roleLabel = sel.options[sel.selectedIndex].text.trim();
+    document.getElementById('emp-role-confirm-name').textContent = roleLabel;
+
+    document.getElementById('confirm-emp-role-btn').onclick = function () {
+      closeModal('confirm-emp-role-modal');
+      form.submit();
+    };
+
+    openModal('confirm-emp-role-modal');
   }
 </script>
 {% endblock %}
