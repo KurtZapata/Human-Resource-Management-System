@@ -913,6 +913,38 @@ def _seed_default_components():
         return
 
     DEFAULTS = [
+        # ── RESTORED EARNINGS FROM IMAGE_0D612F.PNG ──
+        {
+            'name': 'Basic Pay', 'type': 'earning', 'operator': '+',
+            'calculation_type': 'fixed',
+            'default_value': '0.00',
+            'description': 'Base monthly salary from salary grade. Computed automatically from hours worked.',
+            'sort_order': 1,
+        },
+        {
+            'name': 'Overtime Pay', 'type': 'earning', 'operator': '+',
+            'calculation_type': 'formula',
+            'formula': 'ot_hours * ot_rate',
+            'default_value': '0',
+            'description': 'OT hours × overtime rate. Auto-computed from attendance adjustments.',
+            'sort_order': 2,
+        },
+        {
+            'name': 'Holiday Pay', 'type': 'earning', 'operator': '+',
+            'calculation_type': 'fixed',
+            'default_value': '0.00',
+            'description': 'Holiday premium pay. Computed from calendar entries and attendance.',
+            'sort_order': 3,
+        },
+        {
+            'name': 'Night Differential', 'type': 'earning', 'operator': '+',
+            'calculation_type': 'fixed',
+            'default_value': '0.00',
+            'description': '10% premium for work between 10PM–6AM (DOLE Art. 86).',
+            'sort_order': 4,
+        },
+
+        # ── SYSTEM DEDUCTIONS ──
         {
             'name': 'SSS Contribution', 'type': 'deduction', 'operator': '-',
             'calculation_type': 'percentage',
@@ -943,14 +975,6 @@ def _seed_default_components():
             'default_value': '0',
             'description': 'Deduction for late minutes: (hourly_rate ÷ 60) × late_minutes.',
             'sort_order': 13,
-        },
-        {
-            'name': 'Absent Deduction', 'type': 'deduction', 'operator': '-',
-            'calculation_type': 'formula',
-            'formula': 'daily_rate * days_absent',
-            'default_value': '0',
-            'description': 'Deduction for absences: daily_rate × days_absent.',
-            'sort_order': 14,
         },
     ]
 

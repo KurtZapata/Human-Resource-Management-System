@@ -237,12 +237,13 @@ def compute_employee_payroll(employee, period, components=None):
 
     Returns dict:
         {
-          'hours_worked':         Decimal,
-          'hourly_rate':          Decimal,
+          'hours_worked':          Decimal,
+          'hourly_rate':           Decimal,
           'basic_pay':            Decimal,   # includes calendar premium + unworked holiday pay
           'calendar_premium':     Decimal,
           'unworked_holiday_pay': Decimal,
           'gross_pay':            Decimal,
+          'allowances':           Decimal,   # Added flat allowance total
           'total_deductions':     Decimal,
           'net_pay':              Decimal,
           'breakdown':            [ {name, operator, amount, type, description}, ... ],
@@ -288,6 +289,10 @@ def compute_employee_payroll(employee, period, components=None):
     daily_rate    = hourly_rate * STANDARD_HOURS_PER_DAY
     monthly_equiv = daily_rate * STANDARD_WORKING_DAYS
 
+    # Pre-calculate manual allowances beforehand to resolve missing context variables safely
+    allowance_qs = Adjustment.objects.filter(employee=employee, payroll_period=period, type='allowance')
+    total_allowances_sum = allowance_qs.aggregate(s=Sum('amount'))['s'] or Decimal('0')
+
     vars_ctx = {
         'basic_pay':     float(basic_pay),
         'hourly_rate':   float(hourly_rate),
@@ -299,14 +304,15 @@ def compute_employee_payroll(employee, period, components=None):
         'late_minutes':  late_minutes,
         'ot_hours':      0.0,
         'ot_rate':       float(ot_rate),
+        'allowance':     float(total_allowances_sum),  # Context fixed
         'working_days':  22,
         'gross_pay':     float(basic_pay),
     }
 
-    running      = basic_pay
-    total_earn   = basic_pay
-    total_deduct = Decimal('0')
-    breakdown    = []
+    running       = basic_pay
+    total_earn    = basic_pay
+    total_deduct  = Decimal('0')
+    breakdown     = []
 
     if calendar_premium > 0:
         breakdown.append({
@@ -361,12 +367,15 @@ def compute_employee_payroll(employee, period, components=None):
             'description': getattr(comp, 'description', None) or comp.name,
         })
 
-    # ── Step 5: Overtime adjustments — recomputed live, never trust stale ─────
-    #            stored amounts (the rate may have changed since they were saved)
+    # ── Step 5: Overtime adjustments — recomputed live ───────────────────────
     for adj in Adjustment.objects.filter(employee=employee, payroll_period=period, type='overtime'):
         computed = (Decimal(str(adj.hours)) * ot_rate).quantize(Decimal('0.01'), ROUND_HALF_UP)
         running    += computed
         total_earn += computed
+        
+        # Accumulate OT tracking within the execution sequence loop
+        vars_ctx['ot_hours'] += float(adj.hours)
+        
         breakdown.append({
             'name':        f'Overtime Pay ({adj.description or ""})',
             'operator':    '+',
@@ -375,7 +384,7 @@ def compute_employee_payroll(employee, period, components=None):
             'description': f'{adj.hours}h × ₱{float(ot_rate):.2f}/hr',
         })
 
-    # ── Step 6: Leave adjustments — manual ₱ amount, sign decides effect ──────
+    # ── Step 6: Leave adjustments — manual ₱ amount ───────────────────────────
     for adj in Adjustment.objects.filter(employee=employee, payroll_period=period, type='leave'):
         adj_amount = Decimal(str(adj.amount))
         if adj_amount >= 0:
@@ -400,36 +409,37 @@ def compute_employee_payroll(employee, period, components=None):
                 'description': adj.description or 'Unpaid leave',
             })
 
-    # ── Step 7: Allowances — flat ₱ amount, always added, freely-named ────────
-    #            (transportation allowance, meal allowance, bonus, reimbursement,
-    #            etc. — the admin gives it its own `name` so it shows up on the
-    #            payslip/breakdown exactly as intended, e.g. "Meal Allowance"
-    #            instead of a generic label.)
-    for adj in Adjustment.objects.filter(employee=employee, payroll_period=period, type='allowance'):
+    # ── Step 7: Allowances — flat ₱ amount, always added ──────────────────────
+    for adj in allowance_qs:
         add_amount = abs(Decimal(str(adj.amount)))
         running    += add_amount
         total_earn += add_amount
+        
+        # Safe structural verification fallback instead of undefined method
+        label_name = adj.name if adj.name else "Allowance"
+        
         breakdown.append({
-            'name':        adj.display_name(),
+            'name':        label_name,
             'operator':    '+',
             'amount':      float(add_amount),
             'type':        'earning',
-            'description': adj.description or adj.display_name(),
+            'description': adj.description or label_name,
         })
 
     # ── Step 8: Custom deductions — flat ₱ amount, always subtracted ──────────
-    #            (cash advance repayment, damages, etc. — entered by HR as a
-    #            plain positive number; unlike leave there's no sign ambiguity)
     for adj in Adjustment.objects.filter(employee=employee, payroll_period=period, type='deduction'):
         deduct = abs(Decimal(str(adj.amount)))
         running      -= deduct
         total_deduct += deduct
+        
+        label_name = adj.name if adj.name else "Deduction"
+        
         breakdown.append({
-            'name':        adj.display_name(),
+            'name':        label_name,
             'operator':    '-',
             'amount':      float(deduct),
             'type':        'deduction',
-            'description': adj.description or adj.display_name(),
+            'description': adj.description or label_name,
         })
 
     net_pay = running.quantize(Decimal('0.01'), ROUND_HALF_UP)
@@ -441,6 +451,7 @@ def compute_employee_payroll(employee, period, components=None):
         'calendar_premium':     calendar_premium,
         'unworked_holiday_pay': unworked_holiday_pay,
         'gross_pay':            total_earn.quantize(Decimal('0.01'), ROUND_HALF_UP),
+        'allowances':           total_allowances_sum.quantize(Decimal('0.01'), ROUND_HALF_UP),  # Added to top-level return payload
         'total_deductions':     total_deduct.quantize(Decimal('0.01'), ROUND_HALF_UP),
         'net_pay':              net_pay,
         'breakdown':            breakdown,

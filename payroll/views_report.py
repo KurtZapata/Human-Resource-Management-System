@@ -105,6 +105,9 @@ def payroll_report(request):
         'total_net':       agg['total_net']   or 0,
     }
 
+    # ── Build payroll JSON for JS (payslip preview + print) ─────────────────
+    payroll_json = _build_payroll_json(payrolls_qs)
+
     # ── Totals for table footer (current page's filtered set) ───────────────
     filtered_agg = payrolls_qs.aggregate(
         basic_pay        = Sum('basic_pay'),
@@ -112,15 +115,17 @@ def payroll_report(request):
         total_deductions = Sum('total_deductions'),
         net_pay          = Sum('net_pay'),
     )
+
+    # Extract total allowances dynamically from page calculations row array mapping
+    total_allowances_page = Decimal(str(sum(item['allowances'] for item in payroll_json.values())))
+
     totals = {
         'basic_pay':        filtered_agg['basic_pay']        or Decimal('0'),
+        'allowances':       total_allowances_page,
         'gross_pay':        filtered_agg['gross_pay']        or Decimal('0'),
         'total_deductions': filtered_agg['total_deductions'] or Decimal('0'),
         'net_pay':          filtered_agg['net_pay']          or Decimal('0'),
     }
-
-    # ── Build payroll JSON for JS (payslip preview + print) ─────────────────
-    payroll_json = _build_payroll_json(payrolls_qs)
 
     context = {
         'payrolls':        payrolls,
@@ -142,15 +147,6 @@ def payroll_report(request):
 def confirm_payroll(request):
     """
     AJAX POST: Confirm or unconfirm one or more payroll records.
-
-    Body: {
-        "payroll_ids": [1, 2, 3],
-        "confirmed":   true | false,
-        "period_id":   int
-    }
-
-    NOTE: is_confirmed, confirmed_by, confirmed_at are fields added to
-    the Payroll model beyond the base ERD.
     """
     try:
         body        = json.loads(request.body)
@@ -214,7 +210,6 @@ def confirm_payroll(request):
 def payslip_json(request, pk):
     """
     AJAX GET: Returns full payslip data for one payroll record.
-    Used by the preview modal JS to render the payslip template.
     """
     payroll = get_object_or_404(
         Payroll.objects.select_related(
@@ -235,7 +230,6 @@ def payslip_json(request, pk):
 def export_payroll(request):
     """
     CSV export of all payroll records for a period.
-    Query param: ?period_id=<id>
     """
     period_id = request.GET.get('period_id')
     if period_id:
@@ -251,7 +245,7 @@ def export_payroll(request):
     writer.writerow([
         'Employee Code', 'Last Name', 'First Name',
         'Department', 'Position', 'Salary Grade',
-        'Basic Pay', 'Gross Pay', 'Total Deductions', 'Net Pay',
+        'Basic Pay', 'Allowance', 'Gross Pay', 'Total Deductions', 'Net Pay',
         'Status', 'Confirmed',
     ])
 
@@ -260,7 +254,10 @@ def export_payroll(request):
                                    'employee__position', 'employee__salary_grade')\
                    .order_by('employee__last_name')
 
+    # Get engine computations for context tracking values inside CSV dump file
     for p in payrolls:
+        # Fallback to internal dict helper parsing values to maintain calculation precision
+        dict_data = _payroll_to_dict(p)
         writer.writerow([
             p.employee.employee_code,
             p.employee.last_name,
@@ -269,6 +266,7 @@ def export_payroll(request):
             p.employee.position.name   if p.employee.position   else '',
             p.employee.salary_grade.name if p.employee.salary_grade else '',
             str(p.basic_pay),
+            str(dict_data['allowances']),
             str(p.gross_pay),
             str(p.total_deductions),
             str(p.net_pay),
@@ -284,7 +282,6 @@ def export_payroll(request):
 def _build_payroll_json(payrolls_qs):
     """
     Serialises the full payroll queryset to a dict keyed by payroll ID.
-    This is passed to the template as JSON and used by the JS payslip renderer.
     """
     result = {}
     for p in payrolls_qs:
@@ -294,9 +291,7 @@ def _build_payroll_json(payrolls_qs):
 
 def _payroll_to_dict(p):
     """
-    Converts a Payroll model instance (with select_related) to a
-    JSON-serialisable dict including the PayrollBreakdown line items
-    and attendance summary.
+    Converts a Payroll model instance to a JSON-serialisable dict.
     """
     emp = p.employee
 
@@ -317,6 +312,15 @@ def _payroll_to_dict(p):
         date__gte=p.payroll_period.start_date,
         date__lte=p.payroll_period.end_date,
     )
+    
+    allowance_sum = float(
+        Adjustment.objects.filter(
+            employee=emp,
+            payroll_period=p.payroll_period,
+            type='allowance',
+        ).aggregate(s=Sum('amount'))['s'] or 0
+    )
+
     att_summary = {
         'days_present': att_qs.filter(status='present').count(),
         'days_absent':  att_qs.filter(status='absent').count(),
@@ -341,6 +345,7 @@ def _payroll_to_dict(p):
         'salary_grade':     emp.salary_grade.name if emp.salary_grade else '',
         'employment_type':  emp.employment_type,
         'basic_pay':        float(p.basic_pay),
+        'allowances':       allowance_sum,
         'gross_pay':        float(p.gross_pay),
         'total_deductions': float(p.total_deductions),
         'net_pay':          float(p.net_pay),

@@ -221,7 +221,6 @@
 
 {% block content %}
 
-<!-- ── Period Selector ── -->
 <div class="period-selector">
   <label for="period-select">Payroll Period:</label>
   <select class="form-control" id="period-select" style="width:auto;"
@@ -245,7 +244,6 @@
   </div>
 </div>
 
-<!-- ── Stats ── -->
 <div class="pr-stats">
   <div class="stat-card">
     <div class="stat-icon blue">👥</div>
@@ -275,7 +273,6 @@
   </div>
 </div>
 
-<!-- ── Toolbar ── -->
 <div class="pr-toolbar">
   <div class="search-bar">
     <span class="search-icon">🔍</span>
@@ -302,14 +299,12 @@
 
   <span class="selection-count" id="selection-count">0 selected</span>
 
-  <!-- Bulk actions (shown when selection > 0) -->
   <div id="bulk-actions" style="display:none;display:flex;gap:.5rem;flex-wrap:wrap;">
     <button class="btn btn-primary btn-sm" onclick="confirmSelected()">✅ Confirm Selected</button>
     <button class="btn btn-outline btn-sm" onclick="printSelected()">🖨 Print Selected</button>
   </div>
 </div>
 
-<!-- ── Payroll Table ── -->
 <div class="card">
   <div class="card-header">
     <h3>Payroll Register — {{ current_period.start_date|date:"M d" }} to {{ current_period.end_date|date:"M d, Y" }}</h3>
@@ -328,6 +323,7 @@
           <th>Department</th>
           <th>Grade</th>
           <th class="num">Basic Pay</th>
+          <th class="num">Allowance</th>
           <th class="num">Gross Pay</th>
           <th class="num">Deductions</th>
           <th class="num">Net Pay</th>
@@ -363,6 +359,7 @@
           <td>{{ payroll.employee.salary_grade.name|default:"—" }}</td>
 
           <td class="num">₱{{ payroll.basic_pay|floatformat:"2" }}</td>
+          <td class="num" style="color:var(--gray-700);"><span id="row-allowance-{{ payroll.id }}">₱0.00</span></td>
           <td class="num" style="color:var(--success);">₱{{ payroll.gross_pay|floatformat:"2" }}</td>
           <td class="num" style="color:var(--danger);">₱{{ payroll.total_deductions|floatformat:"2" }}</td>
           <td class="num" style="color:var(--blue-800);font-size:.95rem;">
@@ -398,7 +395,7 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="10" style="text-align:center;padding:3rem;color:var(--gray-400);">
+          <td colspan="11" style="text-align:center;padding:3rem;color:var(--gray-400);">
             <div style="font-size:2.5rem;margin-bottom:.75rem;">📋</div>
             No payroll records for this period. Run payroll first.
           </td>
@@ -406,12 +403,12 @@
         {% endfor %}
       </tbody>
 
-      <!-- Totals Footer -->
       {% if payrolls %}
       <tfoot>
         <tr>
           <td colspan="4" style="font-weight:800;color:var(--gray-700);">TOTALS</td>
           <td class="num">₱{{ totals.basic_pay|floatformat:"2" }}</td>
+          <td class="num" style="color:var(--gray-700);">₱{{ totals.allowances|floatformat:"2" }}</td>
           <td class="num" style="color:var(--success);">₱{{ totals.gross_pay|floatformat:"2" }}</td>
           <td class="num" style="color:var(--danger);">₱{{ totals.total_deductions|floatformat:"2" }}</td>
           <td class="num" style="color:var(--blue-800);">₱{{ totals.net_pay|floatformat:"2" }}</td>
@@ -422,7 +419,6 @@
     </table>
   </div>
 
-  <!-- Pagination -->
   <div style="padding:1rem 1.5rem;display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--gray-200);">
     <span class="text-sm text-gray" id="row-count">
       Showing {{ payrolls.count }} records
@@ -446,9 +442,6 @@
 </div>
 
 
-<!-- ══════════════════════════════════════════════════════
-     PAYSLIP PREVIEW MODAL
-══════════════════════════════════════════════════════ -->
 <div class="modal-backdrop" id="payslip-modal">
   <div class="modal">
     <div class="modal-header no-print">
@@ -459,14 +452,10 @@
       </div>
     </div>
     <div class="modal-body" style="padding:0;" id="payslip-preview-body">
-      <!-- Populated dynamically -->
-    </div>
+      </div>
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════
-     BATCH PRINT MODAL
-══════════════════════════════════════════════════════ -->
 <div class="modal-backdrop" id="batch-print-modal">
   <div class="modal">
     <div class="modal-header">
@@ -513,9 +502,6 @@
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════
-     CONFIRM ALL MODAL
-══════════════════════════════════════════════════════ -->
 <div class="modal-backdrop" id="confirm-all-modal">
   <div class="modal">
     <div class="modal-header"><h2>Confirm All Payroll</h2>
@@ -541,9 +527,6 @@
   </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════════
-     UNCONFIRM MODAL
-══════════════════════════════════════════════════════ -->
 <div class="modal-backdrop" id="unconfirm-modal">
   <div class="modal">
     <div class="modal-header"><h2>Unconfirm Payroll</h2>
@@ -563,23 +546,29 @@
   </div>
 </div>
 
-<!-- Hidden print area -->
 <div id="print-area" style="display:none;"></div>
 
-<!-- ══════════════════════════════════════════════════════
-     JAVASCRIPT
-══════════════════════════════════════════════════════ -->
 <script>
 /* ─────────────────────────────────────────────────────────
    DATA FROM DJANGO
-   payrollData is injected as a JSON object keyed by payroll ID
-   Each entry contains: employee info, earnings, deductions, breakdown
 ───────────────────────────────────────────────────────── */
 const payrollData     = {{ payroll_json|safe|default:"{}" }};
 const companyName     = "{{ company_name|default:'Your Company' }}";
 const companyInitials = "{{ company_initials|default:'HR' }}";
 const periodLabel     = "{{ current_period.start_date|date:'M d' }} – {{ current_period.end_date|date:'M d, Y' }}";
 const periodId        = {{ current_period.id|default:0 }};
+
+/* ─────────────────────────────────────────────────────────
+   HYDRATE ALLOWANCE COLUMN ON INITIAL LOAD
+───────────────────────────────────────────────────────── */
+document.addEventListener("DOMContentLoaded", () => {
+  Object.keys(payrollData).forEach(id => {
+    const allowanceEl = document.getElementById(`row-allowance-${id}`);
+    if (allowanceEl && payrollData[id].allowances !== undefined) {
+      allowanceEl.textContent = `₱${fmt(payrollData[id].allowances)}`;
+    }
+  });
+});
 
 /* ─────────────────────────────────────────────────────────
    TABLE FILTER
@@ -614,7 +603,6 @@ function toggleSelectAll(cb) {
       row.classList.toggle('selected-row', checked);
     }
   });
-  // Sync both checkboxes
   document.getElementById('select-all-cb').checked = checked;
   document.getElementById('th-cb').checked = checked;
   updateSelection();
@@ -630,7 +618,6 @@ function updateSelection() {
   bulkEl.style.display = count > 0 ? 'flex' : 'none';
   document.getElementById('batch-sel-num').textContent = count;
   document.getElementById('batch-selected-count').textContent = count;
-  // Sync header checkbox state
   const all = document.querySelectorAll('.row-cb').length;
   document.getElementById('th-cb').indeterminate = count > 0 && count < all;
   document.getElementById('th-cb').checked = count === all && all > 0;
@@ -647,12 +634,10 @@ function getSelectedIds() {
 async function toggleConfirm(payrollId, btn) {
   const isConfirmed = btn.classList.contains('confirmed');
   if (isConfirmed) {
-    // Clicking "confirmed" → ask to unconfirm
     const data = payrollData[payrollId];
     unconfirmPayroll(payrollId, data ? `${data.first_name} ${data.last_name}` : 'this employee');
     return;
   }
-  // Confirm
   await setConfirmStatus([payrollId], true);
 }
 
@@ -743,7 +728,7 @@ function buildPayslipHTML(data, forPrint = false) {
 
   const earningsRows = earnings.map(e =>
     `<tr><td>${e.name}</td><td>₱${fmt(e.amount)}</td></tr>`
-  ).join('') || '<tr><td>Basic Pay</td><td>₱${fmt(data.basic_pay)}</td></tr>';
+  ).join('') || `<tr><td>Basic Pay</td><td>₱${fmt(data.basic_pay)}</td></tr>`;
 
   const deductionRows = deductions.map(d =>
     `<tr><td>${d.name}</td><td style="color:var(--danger);">₱${fmt(d.amount)}</td></tr>`
@@ -794,7 +779,6 @@ function buildPayslipHTML(data, forPrint = false) {
 
     <div class="payslip-body">
       <div class="ps-cols">
-        <!-- Earnings -->
         <div>
           <span class="ps-section-label">💵 Earnings</span>
           <table class="ps-items">
@@ -810,11 +794,10 @@ function buildPayslipHTML(data, forPrint = false) {
             </tfoot>
           </table>
         </div>
-        <!-- Deductions -->
         <div>
           <span class="ps-section-label">📉 Deductions</span>
           <table class="ps-items">
-            <tbody>${deductionRows}</tbody>
+            <tbody>${dedRules = deductionRows}</tbody>
             <tfoot>
               <tr>
                 <td class="ps-deduction-total">Total Deductions</td>
@@ -825,7 +808,6 @@ function buildPayslipHTML(data, forPrint = false) {
         </div>
       </div>
 
-      <!-- Attendance Summary -->
       ${data.attendance ? `
       <span class="ps-section-label">📋 Attendance Summary</span>
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:.75rem;margin-bottom:1.25rem;">
