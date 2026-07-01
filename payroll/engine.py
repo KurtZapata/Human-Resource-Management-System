@@ -24,7 +24,8 @@ THE MASTER FORMULA (applied in this exact order):
          running_total = running_total <operator> amount      (+, -, ×, ÷)
   6. running_total   += Σ(overtime_hours × overtime_rate)       [from Adjustment]
   7. running_total   += Σ(leave adjustment amounts)              [manual, ± by HR]
-  8. running_total   -= Σ(custom deduction amounts)               [manual, always −]
+  8. running_total   += Σ(allowance amounts)                     [manual, always +, freely named]
+  9. running_total   -= Σ(custom deduction amounts)               [manual, always −]
   net_pay = running_total
 
 This function is PURE with respect to the database: it only reads
@@ -399,7 +400,24 @@ def compute_employee_payroll(employee, period, components=None):
                 'description': adj.description or 'Unpaid leave',
             })
 
-    # ── Step 7: Custom deductions — flat ₱ amount, always subtracted ──────────
+    # ── Step 7: Allowances — flat ₱ amount, always added, freely-named ────────
+    #            (transportation allowance, meal allowance, bonus, reimbursement,
+    #            etc. — the admin gives it its own `name` so it shows up on the
+    #            payslip/breakdown exactly as intended, e.g. "Meal Allowance"
+    #            instead of a generic label.)
+    for adj in Adjustment.objects.filter(employee=employee, payroll_period=period, type='allowance'):
+        add_amount = abs(Decimal(str(adj.amount)))
+        running    += add_amount
+        total_earn += add_amount
+        breakdown.append({
+            'name':        adj.display_name(),
+            'operator':    '+',
+            'amount':      float(add_amount),
+            'type':        'earning',
+            'description': adj.description or adj.display_name(),
+        })
+
+    # ── Step 8: Custom deductions — flat ₱ amount, always subtracted ──────────
     #            (cash advance repayment, damages, etc. — entered by HR as a
     #            plain positive number; unlike leave there's no sign ambiguity)
     for adj in Adjustment.objects.filter(employee=employee, payroll_period=period, type='deduction'):
@@ -407,11 +425,11 @@ def compute_employee_payroll(employee, period, components=None):
         running      -= deduct
         total_deduct += deduct
         breakdown.append({
-            'name':        f'Custom Deduction ({adj.description or ""})',
+            'name':        adj.display_name(),
             'operator':    '-',
             'amount':      float(deduct),
             'type':        'deduction',
-            'description': adj.description or 'Custom deduction',
+            'description': adj.description or adj.display_name(),
         })
 
     net_pay = running.quantize(Decimal('0.01'), ROUND_HALF_UP)

@@ -96,10 +96,28 @@ class PayrollBreakdown(models.Model):
 
 class Adjustment(models.Model):
     # ── 18: Adjustment (Manual Leave & Overtime) ──
-    TYPE_CHOICES = [('leave','Leave'),('overtime','Overtime')]
+    # NOTE: 'deduction' and 'allowance' added beyond base ERD.
+    #   - 'deduction' : flat peso amount, always subtracted (e.g. cash advance)
+    #   - 'allowance' : flat peso amount, always added -- a free-form, one-off
+    #                   addition to salary (e.g. transportation allowance,
+    #                   meal allowance, bonus, reimbursement). Unlike the
+    #                   fixed 'leave'/'overtime'/'deduction' categories,
+    #                   the admin gives it its own custom `name` so the
+    #                   payslip/breakdown shows exactly what it's for.
+    TYPE_CHOICES = [
+        ('leave', 'Leave'),
+        ('overtime', 'Overtime'),
+        ('deduction', 'Deduction'),
+        ('allowance', 'Allowance'),
+    ]
     employee       = models.ForeignKey(Employee, on_delete=models.CASCADE)
     payroll_period = models.ForeignKey(PayrollPeriod, on_delete=models.CASCADE)
     type           = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    # NOTE: Added so admins can give allowance/deduction adjustments a
+    # custom, user-defined label (e.g. "Transportation Allowance",
+    # "13th Month Advance", "Uniform Deduction") instead of a generic one.
+    # Optional -- falls back to the type's default label when blank.
+    name           = models.CharField(max_length=150, blank=True, default='')
     hours          = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     rate           = models.DecimalField(max_digits=8, decimal_places=2, default=0)
     amount         = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -107,6 +125,16 @@ class Adjustment(models.Model):
     leave_type_id  = models.PositiveIntegerField(null=True, blank=True)  # FK to LeaveType
     created_by     = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     created_at     = models.DateTimeField(auto_now_add=True)
+
+    def display_name(self):
+        """Returns the admin-given name if set, else a sensible default per type."""
+        if self.name:
+            return self.name
+        defaults = {
+            'leave': 'Leave', 'overtime': 'Overtime',
+            'deduction': 'Custom Deduction', 'allowance': 'Allowance',
+        }
+        return defaults.get(self.type, 'Adjustment')
 
 
 class Payslip(models.Model):

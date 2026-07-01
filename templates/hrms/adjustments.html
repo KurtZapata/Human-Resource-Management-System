@@ -28,6 +28,7 @@
   .type-pill.leave    { background: #F3E8FF; color: #7E22CE; }
   /* Add to the existing .type-pill CSS rules */
   .type-pill.deduction { background: #FEE2E2; color: #B91C1C; }
+  .type-pill.allowance { background: #DCFCE7; color: #15803D; }
 
   .emp-cell { display: flex; align-items: center; gap: .6rem; }
   .emp-av-sm {
@@ -80,6 +81,15 @@
   </div>
   <div style="width:1px;height:36px;background:var(--gray-200);"></div>
   <div class="adj-total-item">
+    <span class="label">Allowances</span>
+    <span class="val" style="color:#15803D;">{{ summary.allowance_count }}</span>
+  </div>
+  <div class="adj-total-item">
+    <span class="label">Total Allowances</span>
+    <span class="val" style="color:#15803D;">₱{{ summary.total_allowance_amount|floatformat:"2" }}</span>
+  </div>
+  <div style="width:1px;height:36px;background:var(--gray-200);"></div>
+  <div class="adj-total-item">
     <span class="label">Custom Deductions</span>
     <span class="val" style="color:#DC2626;">{{ summary.deduction_count }}</span>
   </div>
@@ -113,6 +123,7 @@
         <option value="">All Types</option>
         <option value="overtime" {% if request.GET.type == 'overtime' %}selected{% endif %}>Overtime</option>
         <option value="leave"    {% if request.GET.type == 'leave' %}selected{% endif %}>Leave</option>
+        <option value="allowance" {% if request.GET.type == 'allowance' %}selected{% endif %}>Allowance</option>
         <option value="deduction" {% if request.GET.type == 'deduction' %}selected{% endif %}>Custom Deduction</option>
       </select>
     </div>
@@ -146,6 +157,7 @@
           <th>Employee</th>
           <th>Period</th>
           <th>Type</th>
+          <th>Name</th>
           <th>Leave Type</th>
           <th style="text-align:right;">Hours / Days</th>
           <th style="text-align:right;">Rate (₱/hr)</th>
@@ -174,8 +186,14 @@
             <span class="type-pill {{ adj.type }}">
               {% if adj.type == 'overtime' %}⏰ Overtime
               {% elif adj.type == 'leave' %}🏖 Leave
+              {% elif adj.type == 'allowance' %}➕ Allowance
               {% else %}💸 Deduction{% endif %}
             </span>
+          </td>
+          <td style="font-size:.82rem;font-weight:600;">
+            {% if adj.type == 'allowance' or adj.type == 'deduction' %}
+              {{ adj.display_name }}
+            {% else %}—{% endif %}
           </td>
           <td>
             {% if adj.leave_type_id %}
@@ -200,7 +218,7 @@
           <td>
             <div style="display:flex;gap:.3rem;">
               <button class="btn btn-outline btn-sm btn-icon"
-                      onclick="editAdj({{ adj.id }}, '{{ adj.type }}', {{ adj.employee_id }}, {{ adj.payroll_period_id }}, {{ adj.hours }}, {{ adj.rate }}, {{ adj.amount }}, '{{ adj.description|escapejs }}', {{ adj.leave_type_id|default:'null' }})">
+                      onclick="editAdj({{ adj.id }}, '{{ adj.type }}', {{ adj.employee_id }}, {{ adj.payroll_period_id }}, {{ adj.hours }}, {{ adj.rate }}, {{ adj.amount }}, '{{ adj.description|escapejs }}', {{ adj.leave_type_id|default:'null' }}, '{{ adj.name|escapejs }}')">
                 ✏
               </button>
               <button class="btn btn-danger btn-sm btn-icon"
@@ -210,7 +228,7 @@
         </tr>
         {% empty %}
         <tr>
-          <td colspan="10" style="text-align:center;padding:3rem;color:var(--gray-400);">
+          <td colspan="11" style="text-align:center;padding:3rem;color:var(--gray-400);">
             <div style="font-size:2.5rem;margin-bottom:.75rem;">📋</div>
             No adjustments found for the selected filters.
           </td>
@@ -286,6 +304,7 @@
             <select name="type" id="adj-type" class="form-control" required onchange="onAdjTypeChange()">
               <option value="overtime">⏰ Overtime</option>
               <option value="leave">🏖 Leave</option>
+              <option value="allowance">➕ Allowance</option>
               <option value="deduction">💸 Custom Deduction</option>
             </select>
           </div>
@@ -300,6 +319,29 @@
               </option>
               {% endfor %}
             </select>
+          </div>
+
+          <div class="form-group" id="name-wrap" style="display:none;grid-column:1/-1;">
+            <label class="form-label">
+              Name <span style="color:var(--danger)">*</span>
+              <span style="font-size:.72rem;color:var(--gray-400);font-weight:400;">
+                Your own label for this item — e.g. "Transportation Allowance", "Meal Allowance",
+                "13th Month Advance", "Uniform Cost"
+              </span>
+            </label>
+            <input type="text" name="name" id="adj-name" class="form-control"
+                   maxlength="150" placeholder="e.g. Transportation Allowance">
+          </div>
+
+          <div class="form-group" id="allowance-wrap" style="display:none;grid-column:1/-1;">
+            <label class="form-label">
+              Allowance Amount (₱) <span style="color:var(--danger)">*</span>
+              <span style="font-size:.72rem;color:var(--gray-400);font-weight:400;">
+                Always added to net pay — e.g. transportation, meal, or clothing allowance, bonus
+              </span>
+            </label>
+            <input type="number" name="amount" id="adj-allowance-amount" class="form-control"
+                   step="0.01" min="0" placeholder="e.g. 1000.00">
           </div>
 
           <div class="form-group" id="hours-wrap">
@@ -375,21 +417,35 @@
 <script>
   function onAdjTypeChange() {
     const type = document.getElementById('adj-type').value;
-    const isOT   = type === 'overtime';
-    const isLeave= type === 'leave';
-    const isDed  = type === 'deduction';
+    const isOT    = type === 'overtime';
+    const isLeave = type === 'leave';
+    const isDed   = type === 'deduction';
+    const isAllow = type === 'allowance';
+    const needsName = isDed || isAllow;
 
     document.getElementById('leave-type-wrap').style.display = isLeave ? '' : 'none';
     document.getElementById('hours-wrap').style.display      = isOT    ? '' : 'none';
     document.getElementById('ot-rate-wrap').style.display     = isOT    ? '' : 'none';
     document.getElementById('deduction-wrap').style.display   = isDed   ? '' : 'none';
+    document.getElementById('allowance-wrap').style.display   = isAllow ? '' : 'none';
+
+    const nameWrap  = document.getElementById('name-wrap');
+    const nameField = document.getElementById('adj-name');
+    nameWrap.style.display = needsName ? '' : 'none';
+    nameField.required = needsName;
+    if (isDed) {
+      nameField.placeholder = 'e.g. Cash Advance Repayment';
+    } else if (isAllow) {
+      nameField.placeholder = 'e.g. Transportation Allowance';
+    }
 
     const amountField = document.getElementById('adj-amount');
     const amountHint   = document.getElementById('amount-hint');
     const amountNote    = document.getElementById('amount-note');
     // The main #adj-amount field is reused for OT (read-only/computed) and
-    // leave (manual, ±). For deduction we use a dedicated #adj-deduction-amount
-    // field instead, so OT/leave behavior below is unchanged.
+    // leave (manual, ±). For deduction / allowance we use dedicated
+    // #adj-deduction-amount / #adj-allowance-amount fields instead, so
+    // OT/leave behavior below is unchanged.
 
     if (isOT) {
       amountField.readOnly = true;
@@ -408,21 +464,24 @@
       amountNote.innerHTML =
         '<span style="color:var(--blue-700);">Positive (+) = leave pay added to salary. ' +
         'Negative (−) = deduction from salary (e.g. -800 for unpaid leave).</span>';
-    } else if (isDed) {
-      // Hide the shared amount field entirely; the dedicated deduction field is used instead
+    } else if (isDed || isAllow) {
+      // Hide the shared amount field entirely; the dedicated field is used instead
       amountField.style.display = 'none';
       amountHint.textContent = '';
       amountNote.innerHTML = '';
     }
   }
 
-  // Also update the form submit / editAdj() to copy #adj-deduction-amount
-  // into the submitted 'amount' field when type === 'deduction':
+  // Also update the form submit / editAdj() to copy #adj-deduction-amount or
+  // #adj-allowance-amount into the submitted 'amount' field:
   function syncDeductionAmountBeforeSubmit() {
     const type = document.getElementById('adj-type').value;
     if (type === 'deduction') {
       document.getElementById('adj-amount').value =
         document.getElementById('adj-deduction-amount').value;
+    } else if (type === 'allowance') {
+      document.getElementById('adj-amount').value =
+        document.getElementById('adj-allowance-amount').value;
     }
   }
 
@@ -459,7 +518,7 @@
     document.getElementById('adj-amount').value = amount;
   }
 
-  function editAdj(id, type, empId, periodId, hours, rate, amount, desc, leaveTypeId) {
+  function editAdj(id, type, empId, periodId, hours, rate, amount, desc, leaveTypeId, name) {
     document.getElementById('adj-modal-title').textContent = 'Edit Adjustment';
 
     document.getElementById('adj-action').value = 'update';
@@ -471,7 +530,9 @@
 
     document.getElementById('adj-hours').value = hours;
     document.getElementById('adj-amount').value = amount;
-    document.getElementById('adj-deduction-amount').value  = amount;   // NEW
+    document.getElementById('adj-deduction-amount').value  = amount;   // mirrored for deduction
+    document.getElementById('adj-allowance-amount').value  = amount;   // NEW — mirrored for allowance
+    document.getElementById('adj-name').value = name || '';            // NEW
     document.getElementById('adj-desc').value = desc;
 
     if (leaveTypeId) {

@@ -477,6 +477,9 @@ def adjustments_view(request):
             adj_type    = request.POST.get('type', 'overtime')
             hours       = Decimal(request.POST.get('hours', '0') or '0')
             description = request.POST.get('description', '').strip()
+            # NEW: user-given label for allowance / deduction adjustments,
+            # e.g. "Transportation Allowance", "Signing Bonus", "Uniform Fee".
+            adj_name    = request.POST.get('name', '').strip()
             leave_type_id = request.POST.get('leave_type_id') or None
 
             # ── Compute amount based on type ────────────────────────────────
@@ -490,8 +493,17 @@ def adjustments_view(request):
                 rate_used = rate
 
             elif adj_type == 'deduction':
-                # NEW: flat custom deduction -- always a positive number,
+                # flat custom deduction -- always a positive number,
                 # always subtracted. No hours/rate involved.
+                amount    = abs(Decimal(request.POST.get('amount', '0') or '0'))
+                rate_used = Decimal('0')
+                hours     = Decimal('0')
+                leave_type_id = None  # not applicable
+
+            elif adj_type == 'allowance':
+                # NEW: flat, freely-named addition to salary -- always a
+                # positive number, always added. No hours/rate involved.
+                # The admin names it themselves (e.g. "Meal Allowance").
                 amount    = abs(Decimal(request.POST.get('amount', '0') or '0'))
                 rate_used = Decimal('0')
                 hours     = Decimal('0')
@@ -503,6 +515,11 @@ def adjustments_view(request):
                 amount    = Decimal(request.POST.get('amount', '0') or '0')
                 rate_used = Decimal('0')
 
+            # Allowance/deduction are the only types with a free-form name;
+            # clear it for the other types so stale names don't linger.
+            if adj_type not in ('allowance', 'deduction'):
+                adj_name = ''
+
             emp_obj = Employee.objects.get(pk=emp_id)
 
             if action == 'create':
@@ -510,6 +527,7 @@ def adjustments_view(request):
                     employee_id       = emp_id,
                     payroll_period_id = period_id,
                     type              = adj_type,
+                    name              = adj_name,
                     hours             = hours,
                     rate              = rate_used,
                     amount            = amount,
@@ -533,6 +551,7 @@ def adjustments_view(request):
                 adj.employee_id       = emp_id
                 adj.payroll_period_id = period_id
                 adj.type              = adj_type
+                adj.name              = adj_name
                 adj.hours             = hours
                 adj.rate              = rate_used
                 adj.amount            = amount
@@ -589,16 +608,19 @@ def adjustments_view(request):
 
     ot_qs   = qs.filter(type='overtime')
     leave_qs= qs.filter(type='leave')
-    ded_qs  = qs.filter(type='deduction')   # NEW
+    ded_qs  = qs.filter(type='deduction')    # NEW
+    allow_qs= qs.filter(type='allowance')    # NEW
 
     summary = {
         'overtime_count':     ot_qs.count(),
         'leave_count':        leave_qs.count(),
         'deduction_count':    ded_qs.count(),                                                   # NEW
+        'allowance_count':    allow_qs.count(),                                                 # NEW
         'total_ot_hours':     float(ot_qs.aggregate(t=Sum('hours'))['t'] or 0),
         'total_ot_amount':    float(sum(a.computed_amount for a in adj_list if a.type == 'overtime')),
         'total_leave_amount': float(sum(a.computed_amount for a in adj_list if a.type == 'leave')),
         'total_deduction_amount': float(sum(a.computed_amount for a in adj_list if a.type == 'deduction')),  # NEW
+        'total_allowance_amount': float(sum(a.computed_amount for a in adj_list if a.type == 'allowance')),  # NEW
     }
 
     from django.core.paginator import Paginator
@@ -704,6 +726,12 @@ def compute_employee_payroll(employee, period, components, request_user=None):
     total_leave_adj   = sum(
         Decimal(str(adj.amount)) for adj in leave_adjustments
     )
+
+    # NEW: freely-named, always-added adjustments (allowances, bonuses, etc.)
+    allowance_adjustments = adj_qs.filter(type='allowance')
+
+    # NEW: flat, always-subtracted adjustments (cash advances, etc.)
+    deduction_adjustments = adj_qs.filter(type='deduction')
 
     vars_ctx = {
         'basic_pay':     float(basic_pay),
@@ -819,6 +847,35 @@ def compute_employee_payroll(employee, period, components, request_user=None):
                 'type':         'deduction',
                 'description':  adj.description or f'Unpaid {leave_type_name}',
             })
+
+    # NEW: Allowances — flat ₱ amount, always added, freely named by the
+    # admin (e.g. "Transportation Allowance", "Meal Allowance", "Bonus").
+    for adj in allowance_adjustments:
+        add_amount = abs(Decimal(str(adj.amount)))
+        running    += add_amount
+        total_earn += add_amount
+        breakdown.append({
+            'component_id': None,
+            'name':         adj.display_name(),
+            'operator':     '+',
+            'amount':       float(add_amount),
+            'type':         'earning',
+            'description':  adj.description or adj.display_name(),
+        })
+
+    # NEW: Custom deductions — flat ₱ amount, always subtracted.
+    for adj in deduction_adjustments:
+        deduct = abs(Decimal(str(adj.amount)))
+        running      -= deduct
+        total_deduct += deduct
+        breakdown.append({
+            'component_id': None,
+            'name':         adj.display_name(),
+            'operator':     '-',
+            'amount':       float(deduct),
+            'type':         'deduction',
+            'description':  adj.description or adj.display_name(),
+        })
 
     net_pay = running.quantize(Decimal('0.01'), ROUND_HALF_UP)
 
